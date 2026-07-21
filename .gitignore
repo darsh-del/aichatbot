@@ -1,0 +1,28 @@
+# macOS files
+._*
+.DS_Store
+
+# Environment variables
+.env
+*.env
+!.env.example
+
+# Python / Virtualenv
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.pytest_cache/
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+.next/
+
+# IDE / Editor folders
+.vscode/
+.idea/
+.claude/

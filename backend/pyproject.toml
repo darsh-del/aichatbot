@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[project]
+name = "chatbot-backend"
+version = "0.1.0"
+description = "Reusable chatbot backend (FastAPI + litellm) for customer-support or internal Q&A use cases."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "litellm>=1.40",
+    "orjson>=3.9",  # litellm imports this at runtime for streaming but doesn't declare it
+    "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",
+    "sse-starlette>=2.1",
+    # Vector DB + embedding for RAG
+    "weaviate-client>=4.6",
+    "openai>=1.30",
+    "mcp>=1.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+    "pylint>=3.2",
+    "httpx>=0.27",
+]
+
+[tool.pylint.main]
+disable = [
+    "too-few-public-methods",     # pydantic BaseModel subclasses are data schemas, not OOP objects - this rule doesn't apply to them
+    "missing-function-docstring", # test function names are self-documenting; forcing a docstring on every test is pure boilerplate
+]
+
+[tool.pylint.format]
+max-line-length = 100
