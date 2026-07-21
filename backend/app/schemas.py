@@ -13,11 +13,14 @@ class ChatMessage(BaseModel):
     """A single message in the conversation, as sent by the client."""
 
     role: Literal["user", "assistant"]
-    content: str
+    # 8000 chars ≈ 2000 tokens — plenty for a real question, blocks token-flood abuse.
+    content: str = Field(min_length=1, max_length=8000)
 
 
 class ChatRequest(BaseModel):
     """Request body for POST /api/chat."""
 
-    messages: list[ChatMessage] = Field(min_length=1)
+    # 40 messages ≈ 20 turns; anything longer is either a bug or abuse. The client
+    # resends full history each turn, so capping this bounds the worst-case request size.
+    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
     session_id: Optional[str] = None

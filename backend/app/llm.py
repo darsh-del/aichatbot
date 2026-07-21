@@ -30,6 +30,9 @@ from app.tools import TOOL_SCHEMAS, dispatch_tool
 # workflow legitimately needs a longer tool chain.
 MAX_TOOL_ITERATIONS = 5
 
+# Bounds worst-case cost per turn — a normal answer is well under this.
+MAX_OUTPUT_TOKENS = 1500
+
 
 def _load_base_prompt() -> str:
     """Read the base system-prompt / knowledge-base file configured via SYSTEM_PROMPT_FILE."""
@@ -106,6 +109,7 @@ async def _run_tool_loop(messages: list[dict]) -> list[dict]:
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",
+                max_tokens=MAX_OUTPUT_TOKENS,
             )
             message = response.choices[0].message
             tool_calls = getattr(message, "tool_calls", None)
@@ -154,6 +158,7 @@ async def stream_chat_response(chat_messages: list[ChatMessage]) -> AsyncGenerat
             model=settings.llm_model,
             messages=messages,
             stream=True,
+            max_tokens=MAX_OUTPUT_TOKENS,
         )
         async for chunk in response:
             delta = chunk.choices[0].delta.content or ""

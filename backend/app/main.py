@@ -7,10 +7,12 @@ from fastapi.responses import StreamingResponse
 
 from app.config import settings
 from app.llm import stream_chat_response
+from app.rate_limit import RateLimitMiddleware
 from app.schemas import ChatRequest
 
 app = FastAPI(title="Chatbot Backend")
 
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,

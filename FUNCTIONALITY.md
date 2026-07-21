@@ -104,13 +104,28 @@ and the request degrades to local tools only rather than failing the whole chat.
 - Backend URL is configurable via `VITE_API_BASE_URL`, so the same frontend build can point at any
   backend instance speaking the same `/api/chat` SSE contract.
 
-## 6. Repurposing
+## 6. Security guardrails
+
+Defense-in-depth without over-engineering — the model itself is the intent classifier (see §1), not a separate call, so refusals are free.
+
+- **Scope enforcement** (system prompt, [knowledge_base.md](backend/data/knowledge_base.md)) — the model is explicitly told its scope (Bucketlistt adventure planning), what to refuse (general knowledge, coding, other companies, medical/legal/financial, jokes, roleplay), and how to refuse (one short warm sentence that pivots to trip planning, worded differently every time). Live-verified: general-knowledge, coding, jailbreak, and prompt-extraction prompts all get on-brand refusals; real activity questions still work.
+- **Prompt-injection resistance** — the prompt explicitly instructs the model to ignore any user text claiming to be from a developer/admin/system, requesting the system prompt, or asking it to adopt a new persona. It also states the model has no ability to take payments, log users in, or access accounts — reinforcing the structural exclusion in §3.
+- **Input caps** ([schemas.py](backend/app/schemas.py)) — `content` is capped at 8000 chars (~2000 tokens) per message and `messages` at 40 per request. Oversized payloads are rejected with a 422 before ever reaching the model, blocking token-flood abuse.
+- **Output token cap** ([llm.py](backend/app/llm.py)) — `max_tokens=1500` on every litellm call bounds worst-case cost per turn.
+- **Per-IP rate limit** ([rate_limit.py](backend/app/rate_limit.py)) — 20 chat requests/min per IP via an in-memory sliding-window middleware. Uses `X-Forwarded-For` when behind a proxy. Excess requests get a 429 without ever hitting the LLM.
+- **Structural payment exclusion** — see §3; auth/cart/payment MCP tools are never loaded into the toolset, so no prompt injection can make the model take actions it doesn't have tools for.
+- **CORS allowlist** — origins are configured via `CORS_ORIGINS`, not `*`.
+- **No system-role forgery** — clients cannot inject a `system` message (`ChatMessage.role` is typed to `user`/`assistant` only, enforced at the schema layer).
+
+Deliberately skipped: separate LLM intent classifiers (add 5-11s latency per turn for no benefit — the main call already classifies), regex blocklists (trivially bypassed, false positives), heavyweight guardrail libraries (guardrails-ai, NeMo — over-engineering for this scale).
+
+## 7. Repurposing
 
 Per [ARCHITECTURE.md](ARCHITECTURE.md), the same backend image serves either a customer-facing bot
 or an internal policy bot purely via env config — `SYSTEM_PROMPT_FILE`, which tools/MCP servers are
 enabled, and `CORS_ORIGINS` — no code branching required.
 
-## 7. Configuration reference
+## 8. Configuration reference
 
 | Env var | Required | Purpose |
 |---|---|---|
@@ -124,17 +139,17 @@ enabled, and `CORS_ORIGINS` — no code branching required.
 | `MCP_SERVER_URL` | No | Enables live catalog tools when set |
 | `VITE_API_BASE_URL` (frontend) | No | Backend base URL the UI talks to |
 
-## 8. Testing & ops
+## 9. Testing & ops
 
-- Backend: 10 pytest tests ([backend/tests](backend/tests)) covering health, chat SSE framing
-  (happy path + failure path), config, and tools.
+- Backend: 13 pytest tests ([backend/tests](backend/tests)) covering health, chat SSE framing
+  (happy path + failure path), config, tools, and guardrails (input caps + rate limiter).
 - Frontend: 5 vitest tests ([frontend/src](frontend/src)) covering the chat API client and app
   rendering.
 - `docker-compose.yml` runs three services: `backend` (FastAPI :8000), `frontend` (nginx-served
   static build :80→5173), `weaviate` (self-hosted vector DB :8080, persisted volume) — no cloud
   dependency required beyond the LLM provider and the bucketlistt MCP server.
 
-## 9. Explicitly out of scope (by design, not yet-missing)
+## 10. Explicitly out of scope (by design, not yet-missing)
 
 - No payments, bookings, cart, or login — see §3.
 - No server-side conversation persistence — client resends full history each turn.
