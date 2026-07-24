@@ -1,11 +1,17 @@
-"""Client for bucketlistt's live MCP server — catalog/browse tools only.
+"""Client for bucketlistt's live MCP server — catalog + auth + cart tier.
 
-Deliberately whitelists only read-only catalog tools (destinations,
-experiences, activities, slots, add-ons). Identity, cart, and payment tools
-(send_otp, verify_otp, add_to_cart, get_cart, update_cart_item,
-remove_from_cart, get_my_bookings, create_payment_link, create_booking_order)
-are never loaded, so the model has no way to touch a real account or move
-money — those tools simply aren't in the list it's given.
+Whitelists browse tools (destinations, experiences, activities, slots, add-ons),
+OTP-based auth (send_otp, verify_otp), and cart management (add_to_cart, get_cart,
+update_cart_item, remove_from_cart), plus read-only get_my_bookings.
+
+**Payment tools (create_payment_link, create_booking_order) remain excluded** —
+the bot can build a cart for the user, but the actual charge happens on
+bucketlistt.com, not through the chatbot. This keeps the money-moving surface
+zero-sized while still letting the bot do the useful pre-checkout work.
+
+The authToken from verify_otp flows through the conversation naturally — the
+LLM sees it in the tool result and passes it into subsequent authenticated
+tool calls. Each user's token is scoped to their conversation.
 """
 from contextlib import AsyncExitStack, asynccontextmanager
 
@@ -16,6 +22,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from app.config import settings
 
 ALLOWED_TOOLS = {
+    # Browse (read-only, no auth)
     "get_destinations",
     "get_experiences",
     "get_experience",
@@ -24,6 +31,16 @@ ALLOWED_TOOLS = {
     "search_activities_by_destination_and_tag",
     "get_activity_slots",
     "get_activity_addons",
+    # Auth (SMS OTP login only)
+    "send_otp",
+    "verify_otp",
+    # Cart (build up an order, no payment)
+    "add_to_cart",
+    "get_cart",
+    "update_cart_item",
+    "remove_from_cart",
+    # Post-book read
+    "get_my_bookings",
 }
 
 

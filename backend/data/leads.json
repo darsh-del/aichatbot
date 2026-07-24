@@ -154,5 +154,31 @@
     "notes": "",
     "urgency": "normal",
     "status": "PENDING_HUMAN_CALLBACK"
+  },
+  {
+    "ticket_id": "LEAD-62662",
+    "timestamp": "2026-07-24 17:03:14",
+    "name": "Rahul Sharma",
+    "phone": "+91 98765 43210",
+    "email": "",
+    "group_size": 8,
+    "activity_interest": "16 KM Rafting + Bungee Jump",
+    "preferred_date": "",
+    "notes": "Group discount request for 8 people next weekend",
+    "urgency": "high",
+    "status": "PENDING_HUMAN_CALLBACK"
+  },
+  {
+    "ticket_id": "LEAD-91671",
+    "timestamp": "2026-07-24 17:03:14",
+    "name": "Test User",
+    "phone": "1234567890",
+    "email": "",
+    "group_size": 6,
+    "activity_interest": "",
+    "preferred_date": "",
+    "notes": "",
+    "urgency": "normal",
+    "status": "PENDING_HUMAN_CALLBACK"
   }
 ]
