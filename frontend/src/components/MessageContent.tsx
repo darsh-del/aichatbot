@@ -125,11 +125,6 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, role })
         <div className="formatted-text-wrapper">
           {renderFormattedParagraphs(content)}
         </div>
-
-        <div className="card-footer-strip">
-          <span className="deposit-tag">⚡ Pay 10% Deposit Only</span>
-          <span className="verify-tag">🛡️ Verified Operators</span>
-        </div>
       </div>
     </div>
   )

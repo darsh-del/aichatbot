@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, KeyboardEvent } from 'react'
 import { streamChat } from './api/chat'
 import type { ChatMessage } from './api/chat'
 import { Header } from './components/Header'
@@ -73,6 +73,14 @@ function App() {
     sendPromptMessage(input.trim())
   }
 
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter submits; Shift+Enter inserts a newline (textarea default).
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      sendPromptMessage(input.trim())
+    }
+  }
+
   const handleNewChat = () => {
     if (isStreaming && abortRef.current) {
       abortRef.current.abort()
@@ -96,7 +104,6 @@ function App() {
       <Sidebar
         onSelectPrompt={sendPromptMessage}
         onNewChat={handleNewChat}
-        onOpenLeadModal={() => setIsLeadModalOpen(true)}
       />
 
       <main className="chat-main-area">
@@ -167,11 +174,12 @@ function App() {
         <QuickChips onSelectPrompt={sendPromptMessage} disabled={isStreaming} />
 
         <form className="composer-bar" onSubmit={handleSubmit}>
-          <input
-            type="text"
+          <textarea
+            rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask a question or request group quote..."
+            onKeyDown={handleKeyDown}
+            placeholder="Ask a question or request group quote... (Shift+Enter for new line)"
             disabled={isStreaming}
             aria-label="Message"
           />

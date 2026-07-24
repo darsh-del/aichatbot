@@ -634,7 +634,7 @@ body {
   gap: 12px;
 }
 
-.composer-bar input {
+.composer-bar textarea {
   flex: 1;
   padding: 15px 22px;
   border-radius: 16px;
@@ -646,9 +646,13 @@ body {
   outline: none;
   box-shadow: var(--shadow-lux-md);
   transition: all 0.2s ease;
+  resize: none;
+  max-height: 160px;
+  overflow-y: auto;
+  line-height: 1.4;
 }
 
-.composer-bar input:focus {
+.composer-bar textarea:focus {
   border-color: var(--accent-charcoal);
   box-shadow: 0 8px 28px rgba(28, 25, 23, 0.1);
 }

@@ -120,7 +120,7 @@ async def _run_tool_loop(messages: list[dict]) -> list[dict]:
                 if call.function.name in MCP_ALLOWED_TOOLS:
                     result = await call_catalog_tool(session, call)
                 else:
-                    result = dispatch_tool(call.function.name, call.function.arguments)
+                    result = await dispatch_tool(call.function.name, call.function.arguments)
                 messages.append(
                     {
                         "role": "tool",

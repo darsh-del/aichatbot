@@ -31,7 +31,14 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # Read from a root .env file or shell env; falls back to localhost for
+        # dev. Set VITE_API_BASE_URL=http://<public-ip>:8000 in a repo-root
+        # .env file before `docker compose build` so the bundle points at the
+        # right backend. Vite reads it at BUILD time, not runtime.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     ports:
       - "5173:80"
     depends_on:

@@ -3,7 +3,6 @@ import React from 'react'
 interface SidebarProps {
   onSelectPrompt: (prompt: string) => void
   onNewChat: () => void
-  onOpenLeadModal: () => void
 }
 
 const TOPICS = [
@@ -14,7 +13,7 @@ const TOPICS = [
   { icon: '⚖️', label: 'Flying Fox Safety', prompt: 'What are the weight and age limits for Flying Fox in Rishikesh?' },
 ]
 
-export const Sidebar: React.FC<SidebarProps> = ({ onSelectPrompt, onNewChat, onOpenLeadModal }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ onSelectPrompt, onNewChat }) => {
   return (
     <aside className="sidebar-nav">
       <div className="sidebar-brand">
@@ -48,19 +47,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onSelectPrompt, onNewChat, onO
         </div>
       </div>
 
-      <div className="sidebar-footer">
-        <div className="agent-status-card">
-          <div className="status-indicator">
-            <span className="status-dot" />
-            <span className="status-text">Weaviate RAG Active</span>
-          </div>
-          <p className="status-desc">Pay 10% to confirm any booking</p>
-        </div>
-
-        <button type="button" className="sidebar-escalate-btn" onClick={onOpenLeadModal}>
-          📞 Group / Human Callback
-        </button>
-      </div>
     </aside>
   )
 }

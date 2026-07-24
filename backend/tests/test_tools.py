@@ -1,3 +1,4 @@
+import asyncio
 import json
 from app.tools import dispatch_tool, escalate_and_capture_lead
 
@@ -19,6 +20,6 @@ def test_escalate_and_capture_lead():
 
 def test_dispatch_tool_escalation():
     args = json.dumps({"name": "Test User", "phone": "1234567890", "group_size": 6})
-    res = dispatch_tool("escalate_and_capture_lead", args)
+    res = asyncio.run(dispatch_tool("escalate_and_capture_lead", args))
     assert res["status"] == "success"
     assert "ticket_id" in res
