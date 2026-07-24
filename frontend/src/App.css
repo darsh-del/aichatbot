@@ -773,16 +773,111 @@ body {
   background: #FFFFFF;
   border: 1px solid var(--border-light);
   border-radius: 24px;
-  max-width: 540px;
+  max-width: 500px;
   width: 100%;
   padding: 28px;
   box-shadow: var(--shadow-lux-lg);
 }
 
-.modal-header h3 {
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.modal-title-group h3 {
   font-size: 19px;
   font-weight: 800;
   color: var(--text-heading);
+  margin: 0 0 6px;
+}
+
+.modal-title-group p {
+  font-size: 13px;
+  color: var(--text-muted, #78716c);
+  margin: 0;
+  line-height: 1.45;
+}
+
+.close-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: none;
+  background: #F5F5F4;
+  color: var(--text-heading);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.close-btn:hover {
+  background: #E7E5E4;
+}
+
+.lead-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border-subtle);
+  background: #FFFFFF;
+  color: var(--text-heading);
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-sizing: border-box;
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  border-color: var(--accent-charcoal);
+  box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.06);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
 }
 
 .btn-primary {
@@ -793,6 +888,11 @@ body {
   border-radius: 12px;
   border: none;
   cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
 }
 
 .btn-secondary {
@@ -803,6 +903,17 @@ body {
   border-radius: 12px;
   border: none;
   cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background: #E7E5E4;
+}
+
+@media (max-width: 520px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Responsive Breakpoint */

@@ -7,7 +7,7 @@ interface SidebarProps {
 
 const TOPICS = [
   { icon: '🪂', label: 'Bungee Jumping 117m', prompt: 'What are the bungee jumping prices and locations in Rishikesh?' },
-  { icon: '🚣', label: 'River Rafting (9-35km)', prompt: 'Tell me about river rafting packages, distances, and prices.' },
+  { icon: '🚣', label: 'River Rafting (9-35km)', prompt: 'Tell me about river rafting packages, distances (9/16/24/35km), and prices.' },
   { icon: '🪂', label: 'Paragliding Flights', prompt: 'What are the prices, flying time, and locations for Paragliding?' },
   { icon: '⛺', label: 'Camping & Combos', prompt: 'What river-side camping and activity combo packages are available?' },
   { icon: '⚖️', label: 'Flying Fox Safety', prompt: 'What are the weight and age limits for Flying Fox in Rishikesh?' },
