@@ -7,6 +7,11 @@ services:
       PERSISTENCE_DATA_PATH: /var/lib/weaviate
       DEFAULT_VECTORIZER_MODULE: none
       ENABLE_MODULES: ""
+      # Single-node deploy: v1.27+ defaults to multi-node RAFT and hangs
+      # forever trying to join a phantom peer without these.
+      CLUSTER_HOSTNAME: "node1"
+      RAFT_BOOTSTRAP_EXPECT: "1"
+      RAFT_JOIN: "node1"
     volumes:
       - weaviate_data:/var/lib/weaviate
     ports:
