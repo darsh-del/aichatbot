@@ -12,7 +12,9 @@ Kept free of FastAPI/HTTP concerns so it is unit-testable on its own -
 routes in main.py just call `stream_chat_response` and wrap it in a
 StreamingResponse.
 """
+import asyncio
 import json
+from datetime import date
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -26,9 +28,10 @@ from app.schemas import ChatMessage
 from app.tools import TOOL_SCHEMAS, dispatch_tool
 
 # ponytail: fixed cap on tool-call round trips rather than unbounded looping -
-# guards against a model that never stops requesting tools. Raise if a real
-# workflow legitimately needs a longer tool chain.
-MAX_TOOL_ITERATIONS = 5
+# guards against a model that never stops requesting tools. Set to 8 so a full
+# hierarchy drill-down (experience -> activities -> slots) plus an error-recovery
+# retry fits without the loop cutting the model off mid-chain.
+MAX_TOOL_ITERATIONS = 8
 
 # Bounds worst-case cost per turn — a normal answer is well under this.
 MAX_OUTPUT_TOKENS = 1500
@@ -72,18 +75,63 @@ def build_messages(chat_messages: list[ChatMessage]) -> list[dict]:
     else:
         system_content = base_prompt
 
+    # The model has no idea what "today" is (training cutoff) — give it the real
+    # date so it can resolve "this weekend", "tomorrow", "next Saturday" into an
+    # actual YYYY-MM-DD for slot/availability lookups.
+    today = date.today()
+    system_content += (
+        f"\n\n## Current date\nToday is {today:%A, %B %d, %Y} ({today:%Y-%m-%d}). "
+        "Use this to resolve relative dates like 'today', 'tomorrow', 'this weekend', "
+        "or 'next Saturday' into a concrete YYYY-MM-DD when a tool needs a date."
+    )
+
     if settings.mcp_server_url:
         system_content += (
-            "\n\n## Live Catalog Tools\n"
-            "You also have live, read-only catalog tools (get_destinations, get_experiences, "
-            "get_activities, get_activity, search_activities_by_destination_and_tag, "
-            "get_activity_slots, get_activity_addons) that query bucketlistt's real database. "
-            "Prefer calling these over guessing whenever a user asks about a destination, activity, "
-            "price, or availability that isn't already covered above, or whenever they ask for "
-            "current/live/real-time information - never invent destinations, activities, prices, "
-            "or slots. These tools are read-only: you cannot log a user in, touch a cart, or take "
-            "payment, so for booking or payment requests use escalate_and_capture_lead or point the "
-            "user to the website/app instead."
+            "\n\n## Live Catalog Tools & how to use them\n"
+            "You have live, read-only tools that query bucketlistt's real database. Prefer them over "
+            "guessing for anything about destinations, providers, activities, prices, timings, or "
+            "availability. Never invent these facts.\n\n"
+            "**The data has a hierarchy — learn it, because provider names are NOT activities:**\n"
+            "`destination` (city, e.g. Rishikesh) → `experience` = a provider/operator "
+            "(e.g. **Splash Bungy**, **Himalayan Bungee**, **Dronecraft River Rafting**) → "
+            "`activity` = one specific thing that provider sells (e.g. '117M Bungee Jump', "
+            "'16KM Rafting') → `time slots` = bookable times for one activity on one date.\n\n"
+            "**Tools by level:** `get_destinations` (cities) · `get_experiences`/`get_experience` "
+            "(providers in a city) · `get_activities`/`get_activity` (activities) · "
+            "`search_activities_by_destination_and_tag` (best way to find activities by keyword, "
+            "returns them grouped under their provider) · `get_activity_slots` (timings for ONE "
+            "activityId on ONE date) · `get_activity_addons`.\n\n"
+            "**Recipes for common questions — follow the whole chain, do not stop early:**\n"
+            "- *'timings / slots / what time is <Provider>' (e.g. Splash Bungy):* the provider name "
+            "is an EXPERIENCE, not an activity, so `get_activity` on it will fail. Instead: call "
+            "`search_activities_by_destination_and_tag` (or `get_experiences` then `get_activities`) "
+            "to get the provider's activities and their `_id`s, pick the relevant activity, then call "
+            "`get_activity_slots(activityId, date)` using today's date (or the date the user gave). "
+            "Then report the times.\n"
+            "- *'price of <X>' / 'what does <Provider> offer':* find the activities via "
+            "`search_activities_by_destination_and_tag` or `get_activities`; read actualPrice (MRP) "
+            "and discountedPrice (selling).\n"
+            "- *'which cities':* `get_destinations`.\n\n"
+            "**Never give up after one failed or empty tool call.** If a tool returns 'not found' or "
+            "an error hint (e.g. 'try get_activities with experienceId'), FOLLOW the hint and make the "
+            "next call — drill down parent→child until you have the answer. Only fall back to 'contact "
+            "the operator' or `escalate_and_capture_lead` after you have genuinely tried the drill-down "
+            "and it truly has no data.\n"
+            "**An empty result in ONE city does not mean the activity doesn't exist.** Different "
+            "activities live in different cities (e.g. paragliding is in Mussoorie, not Rishikesh). If "
+            "the user names no city and your first search is empty, call `get_destinations` and try the "
+            "other likely cities, or ask the user which city — do not conclude it's unavailable after "
+            "checking only one.\n\n"
+            "**Worked example — 'what are the timings for Splash Bungy':**\n"
+            "1. `get_activity('Splash Bungy')` → fails: 'not found, Splash Bungy is a provider'. Don't stop.\n"
+            "2. `search_activities_by_destination_and_tag(destination='Rishikesh', tagSearch='bungy')` → "
+            "returns Splash Bungy's activities, each with an `_id`.\n"
+            "3. Pick the relevant activity, `get_activity_slots(activityId=<that id>, date=<today>)` → "
+            "returns the day's slots.\n"
+            "4. Answer the user with the actual times. — Follow this same drill-down shape for any "
+            "provider-level question.\n\n"
+            "These tools are read-only: you cannot take payment yourself — for checkout, point the user "
+            "to bucketlistt.com after building their cart (see the booking flow above)."
         )
 
     system_message = {"role": "system", "content": system_content}
@@ -152,7 +200,10 @@ async def stream_chat_response(chat_messages: list[ChatMessage]) -> AsyncGenerat
     client-side stream never just drops.
     """
     try:
-        messages = build_messages(chat_messages)
+        # build_messages does blocking I/O (a sync OpenAI embedding call + a sync
+        # Weaviate query in retrieve()). Running it directly on the event loop
+        # serializes every concurrent request behind it, so offload to a thread.
+        messages = await asyncio.to_thread(build_messages, chat_messages)
         messages = await _run_tool_loop(messages)
         response = await litellm.acompletion(
             model=settings.llm_model,

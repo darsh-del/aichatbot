@@ -14,7 +14,7 @@ Bucketlistt (operated by KOVANS VENTURES PRIVATE LIMITED) is an adventure bookin
 - **Bungee Jumping** — Multiple operators including Himalayan Bungee (117m, India's highest), Maa Ganga Bungee, Splash Bungy, Jumpin' Heights, Thrill Factory
 - **River Rafting** — Ganges rafting in Rishikesh, in **9km, 16km, 24km, and 35km** routes
 - **Drone Craft River Rafting** — a premium rafting product with **drone + DSLR cinematic video coverage and an edited Instagram reel included** (e.g. the 12km Brahmpuri → Neem Beach route). This is what sets it apart from normal rafting: the professional aerial/DSLR footage, not the rafting route itself.
-- **Paragliding** — WhyNotFly and Skywing Adventure in Rishikesh and Mussoorie
+- **Paragliding** — offered in Mussoorie (verify the exact provider and city with the live catalog; don't assume Rishikesh)
 - **Zipline / Flying Fox** — Zip-line over the Ganga river
 - **Hot Air Balloon** — Scenic balloon rides over Rishikesh
 - **Camping** — River-side and forest camps in Rishikesh

@@ -79,8 +79,18 @@ async def load_catalog_tools(session) -> list[dict]:
     return [t for t in tools if t["function"]["name"] in ALLOWED_TOOLS]
 
 
+# Cap each tool result so a multi-step drill-down can't accumulate enough raw
+# JSON (media-URL arrays, HTML descriptions) to overflow the model's context
+# window. ~8k chars keeps the useful fields (titles, prices, slots appear early
+# in the payload) while bounding total context across several tool calls.
+MAX_TOOL_RESULT_CHARS = 8000
+
+
 async def call_catalog_tool(session, tool_call) -> dict:
     """Execute one whitelisted catalog tool call against the live MCP server."""
     result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
     text = "\n".join(part.text for part in result.content if hasattr(part, "text"))
-    return {"result": text or str(result)}
+    text = text or str(result)
+    if len(text) > MAX_TOOL_RESULT_CHARS:
+        text = text[:MAX_TOOL_RESULT_CHARS] + "\n...[result truncated; refine with a more specific query or the `select` field]"
+    return {"result": text}
