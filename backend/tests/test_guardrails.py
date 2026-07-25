@@ -25,7 +25,7 @@ def test_rejects_too_many_messages():
 def test_rate_limiter_returns_429_after_limit(monkeypatch):
     _hits.clear()
 
-    async def _instant_stream(_messages):
+    async def _instant_stream(*_args, **_kwargs):
         if False:
             yield ""
 

@@ -25,6 +25,7 @@ from app.mcp_client import ALLOWED_TOOLS as MCP_ALLOWED_TOOLS
 from app.mcp_client import call_catalog_tool, load_catalog_tools, mcp_session
 from app.retriever import retrieve
 from app.schemas import ChatMessage
+from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
 from app.tools import TOOL_SCHEMAS, dispatch_tool
 
 # ponytail: fixed cap on tool-call round trips rather than unbounded looping -
@@ -42,7 +43,7 @@ def _load_base_prompt() -> str:
     return Path(settings.system_prompt_file).read_text(encoding="utf-8")
 
 
-def build_messages(chat_messages: list[ChatMessage]) -> list[dict]:
+def build_messages(chat_messages: list[ChatMessage], session_id: str | None = None) -> list[dict]:
     """Prepend the server-controlled system prompt to the client conversation.
 
     When Weaviate is configured, the user's latest message is used to retrieve
@@ -130,22 +131,49 @@ def build_messages(chat_messages: list[ChatMessage]) -> list[dict]:
             "returns the day's slots.\n"
             "4. Answer the user with the actual times. — Follow this same drill-down shape for any "
             "provider-level question.\n\n"
-            "These tools are read-only: you cannot take payment yourself — for checkout, point the user "
-            "to bucketlistt.com after building their cart (see the booking flow above)."
+            "For checkout you cannot take payment yourself — after adding to the cart, give the user the "
+            "cart link https://www.bucketlistt.com/cart so they can review and pay there (logged in with "
+            "the same phone number)."
+        )
+
+    # If this session already authenticated earlier, tell the model so it skips
+    # the OTP entirely — the server injects the cached token into cart calls.
+    if get_token(session_id):
+        system_content += (
+            "\n\n## Auth status\nThe user is ALREADY LOGGED IN in this session. Do NOT call send_otp or "
+            "verify_otp again and do NOT ask for their phone/OTP — proceed directly with cart and booking "
+            "actions. The login token is applied automatically."
         )
 
     system_message = {"role": "system", "content": system_content}
     return [system_message] + [m.model_dump() for m in chat_messages]
 
 
-async def _run_tool_loop(messages: list[dict]) -> list[dict]:
+def _inject_auth_token(call, session_id: str | None) -> None:
+    """For an authenticated MCP tool, fill in the cached authToken so the user
+    isn't re-prompted for an OTP. Mutates call.function.arguments in place."""
+    if call.function.name not in AUTH_TOOLS:
+        return
+    token = get_token(session_id)
+    if not token:
+        return
+    try:
+        args = json.loads(call.function.arguments) if call.function.arguments else {}
+    except (ValueError, TypeError):
+        args = {}
+    args["authToken"] = token  # server-owned token always wins over anything the model guessed
+    call.function.arguments = json.dumps(args)
+
+
+async def _run_tool_loop(messages: list[dict], session_id: str | None = None) -> list[dict]:
     """Call the model, executing any requested tool calls, until it stops
     asking for tools (or MAX_TOOL_ITERATIONS is hit).
 
-    Tools come from two sources: the local TOOL_SCHEMAS (escalate_and_capture_lead)
-    and, if MCP_SERVER_URL is configured, the bucketlistt MCP server's read-only
-    catalog tools (live destinations/activities/slots). Identity, cart, and payment
-    MCP tools are never loaded - see app/mcp_client.py.
+    Tools come from the local TOOL_SCHEMAS (escalate_and_capture_lead) and, if
+    MCP_SERVER_URL is set, bucketlistt's catalog + auth + cart tools. When a
+    session already has a cached authToken (from an earlier verify_otp), it is
+    injected into authenticated calls so the user isn't asked to re-OTP; a fresh
+    token returned by verify_otp is cached for the rest of the session.
 
     Returns the accumulated message history, ready for a final streamed call.
     """
@@ -166,7 +194,10 @@ async def _run_tool_loop(messages: list[dict]) -> list[dict]:
             messages.append(message.model_dump())
             for call in tool_calls:
                 if call.function.name in MCP_ALLOWED_TOOLS:
+                    _inject_auth_token(call, session_id)
                     result = await call_catalog_tool(session, call)
+                    if call.function.name == "verify_otp":
+                        set_token(session_id, extract_token(result.get("result", "")))
                 else:
                     result = await dispatch_tool(call.function.name, call.function.arguments)
                 messages.append(
@@ -192,7 +223,9 @@ def _error_message(exc: BaseException) -> str:
     return str(exc)
 
 
-async def stream_chat_response(chat_messages: list[ChatMessage]) -> AsyncGenerator[str, None]:
+async def stream_chat_response(
+    chat_messages: list[ChatMessage], session_id: str | None = None
+) -> AsyncGenerator[str, None]:
     """Run the tool loop then stream the final answer as SSE frames.
 
     Always ends with a `done: true` frame - on any failure, that frame
@@ -203,8 +236,8 @@ async def stream_chat_response(chat_messages: list[ChatMessage]) -> AsyncGenerat
         # build_messages does blocking I/O (a sync OpenAI embedding call + a sync
         # Weaviate query in retrieve()). Running it directly on the event loop
         # serializes every concurrent request behind it, so offload to a thread.
-        messages = await asyncio.to_thread(build_messages, chat_messages)
-        messages = await _run_tool_loop(messages)
+        messages = await asyncio.to_thread(build_messages, chat_messages, session_id)
+        messages = await _run_tool_loop(messages, session_id)
         response = await litellm.acompletion(
             model=settings.llm_model,
             messages=messages,

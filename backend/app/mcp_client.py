@@ -13,6 +13,8 @@ The authToken from verify_otp flows through the conversation naturally — the
 LLM sees it in the tool result and passes it into subsequent authenticated
 tool calls. Each user's token is scoped to their conversation.
 """
+import json
+import re
 from contextlib import AsyncExitStack, asynccontextmanager
 
 import litellm.experimental_mcp_client as litellm_mcp
@@ -79,11 +81,41 @@ async def load_catalog_tools(session) -> list[dict]:
     return [t for t in tools if t["function"]["name"] in ALLOWED_TOOLS]
 
 
-# Cap each tool result so a multi-step drill-down can't accumulate enough raw
-# JSON (media-URL arrays, HTML descriptions) to overflow the model's context
-# window. ~8k chars keeps the useful fields (titles, prices, slots appear early
-# in the payload) while bounding total context across several tool calls.
-MAX_TOOL_RESULT_CHARS = 8000
+# Hard ceiling per tool result — only hit after field-stripping, as a last resort.
+# Sized so a full multi-provider search (e.g. all rafting distances across both
+# providers) survives slimming without truncation dropping later providers.
+MAX_TOOL_RESULT_CHARS = 16000
+
+# Bulky, model-useless fields to drop from tool results. These (image/media URL
+# arrays, HTML blobs) are most of the payload size; stripping them keeps the
+# useful fields (title, _id, prices, distances, slots, phone) so a multi-provider
+# result still fits without blind truncation cutting off later providers — which
+# was hiding the 24km rafting option behind Dronecraft's media bulk.
+_DROP_KEYS = {
+    "media", "images", "primaryMedia", "logo", "image", "__v", "clientId",
+    # pure metadata never needed to answer a user question
+    "createdAt", "updatedAt", "uniqueCode", "advancePercentage", "highlightedOrder",
+    "order", "forAgent", "isHighlighted", "isApproved", "category", "address",
+}
+_HTML_KEYS = {"description", "highlights", "inclusion", "exclusion", "subtitle"}
+_HTML_RE = re.compile(r"<[^>]+>")
+
+
+def _slim(obj):
+    """Recursively drop media/HTML bulk from an MCP JSON result."""
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if k in _DROP_KEYS:
+                continue
+            if k in _HTML_KEYS and isinstance(v, str):
+                out[k] = _HTML_RE.sub("", v).strip()[:300]
+            else:
+                out[k] = _slim(v)
+        return out
+    if isinstance(obj, list):
+        return [_slim(x) for x in obj]
+    return obj
 
 
 async def call_catalog_tool(session, tool_call) -> dict:
@@ -91,6 +123,12 @@ async def call_catalog_tool(session, tool_call) -> dict:
     result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
     text = "\n".join(part.text for part in result.content if hasattr(part, "text"))
     text = text or str(result)
+    # Strip bulky fields first (keeps useful data, shrinks size a lot); only if it
+    # still exceeds the ceiling do we hard-truncate as a fallback.
+    try:
+        text = json.dumps(_slim(json.loads(text)), separators=(",", ":"))
+    except (ValueError, TypeError):
+        pass
     if len(text) > MAX_TOOL_RESULT_CHARS:
-        text = text[:MAX_TOOL_RESULT_CHARS] + "\n...[result truncated; refine with a more specific query or the `select` field]"
+        text = text[:MAX_TOOL_RESULT_CHARS] + "\n...[truncated; use a more specific query or `select`]"
     return {"result": text}

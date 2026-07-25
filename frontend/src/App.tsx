@@ -24,6 +24,9 @@ function App() {
 
   const abortRef = useRef<AbortController | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  // One id per conversation, so the backend can reuse the login token across
+  // turns (and not re-prompt for the OTP). Reset on New Conversation.
+  const sessionIdRef = useRef<string>(crypto.randomUUID())
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' })
@@ -50,7 +53,10 @@ function App() {
 
     try {
       await streamChat(
-        { messages: history.map(({ role, content }) => ({ role, content })) },
+        {
+          messages: history.map(({ role, content }) => ({ role, content })),
+          session_id: sessionIdRef.current,
+        },
         (delta) => {
           setMessages((prev) =>
             prev.map((m) =>
@@ -89,6 +95,7 @@ function App() {
     }
     setMessages([])
     setError(null)
+    sessionIdRef.current = crypto.randomUUID()  // fresh session = fresh login
   }
 
   const handleStop = () => {

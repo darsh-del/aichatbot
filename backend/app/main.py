@@ -32,6 +32,6 @@ def health() -> dict:
 async def chat(request: ChatRequest) -> StreamingResponse:
     """Stream a chat completion as Server-Sent Events."""
     return StreamingResponse(
-        stream_chat_response(request.messages),
+        stream_chat_response(request.messages, request.session_id),
         media_type="text/event-stream",
     )
