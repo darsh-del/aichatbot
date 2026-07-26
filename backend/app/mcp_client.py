@@ -32,6 +32,7 @@ ALLOWED_TOOLS = {
     "get_activity",
     "search_activities_by_destination_and_tag",
     "get_activity_slots",
+    "get_time_slots",  # auth-free twin of get_activity_slots; preferred for timings
     "get_activity_addons",
     # Auth (SMS OTP login only)
     "send_otp",
