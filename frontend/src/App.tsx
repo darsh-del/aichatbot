@@ -120,7 +120,7 @@ function App() {
           {messages.length === 0 && (
             <div className="minimal-welcome-card">
               <div className="welcome-avatar">🪂</div>
-              <h2>Where does your bucket list take you?</h2>
+              <h2>Hey, I'm Josh 🪂 Where's your bucket list taking you?</h2>
               <p>
                 Ask about <strong>Bungee Jumping (117m)</strong>, <strong>Rafting (9-35km)</strong>, <strong>Paragliding</strong>, prices, safety rules, or group discounts!
               </p>
@@ -186,7 +186,7 @@ function App() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask a question or request group quote... (Shift+Enter for new line)"
+            placeholder="Ask Josh anything about your next adventure... (Shift+Enter for new line)"
             disabled={isStreaming}
             aria-label="Message"
           />
