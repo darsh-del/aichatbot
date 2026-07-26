@@ -98,11 +98,21 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "search_web",
             "description": (
-                "Search the live web for time-sensitive info that is not in your knowledge "
-                "base or the Bucketlistt catalog tools — e.g. current season/monsoon status, "
-                "weather at a destination, recent news about a location, or facts that may "
-                "have changed. Only use this when the KB and catalog tools genuinely don't "
-                "have the answer. Do NOT use for questions the KB already covers."
+                "Search the live web when neither your knowledge base nor the Bucketlistt "
+                "catalog tools have a SPECIFIC answer to the user's question. Use it for: "
+                "(1) time-sensitive info — current season/monsoon status, weather, whether "
+                "an activity is open right now; "
+                "(2) operator-specific safety facts the KB doesn't have — exact certification "
+                "body, cord/equipment replacement schedule, whether insurance is included, "
+                "what safety gear is provided, first-aid availability, rain/weather policy; "
+                "(3) logistics details — parking at a specific site, phone policy during a jump, "
+                "certificates issued, footwear advice; "
+                "(4) policy details — cancellation / rescheduling / missed-slot rules not in the KB. "
+                "IMPORTANT: if your only answer from the KB would be a generic phrase like "
+                "'our operators follow international safety standards' or 'it depends on the "
+                "operator', that means the KB does NOT have a specific answer — use search_web "
+                "to find the real detail. Do NOT use it for prices, availability, or activity "
+                "listings already covered by the KB and catalog tools."
             ),
             "parameters": {
                 "type": "object",
