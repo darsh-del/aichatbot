@@ -96,6 +96,10 @@ _DROP_KEYS = {
     # pure metadata never needed to answer a user question
     "createdAt", "updatedAt", "uniqueCode", "advancePercentage", "highlightedOrder",
     "order", "forAgent", "isHighlighted", "isApproved", "category", "address",
+    # timeSlots arrays are the single biggest bulk and are NOT needed here — actual
+    # bookable times come from get_activity_slots (returns them under data.slots).
+    # Dropping them lets a multi-provider search fit without truncating later providers.
+    "timeSlots",
 }
 _HTML_KEYS = {"description", "highlights", "inclusion", "exclusion", "subtitle"}
 _HTML_RE = re.compile(r"<[^>]+>")
