@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { streamChat } from './chat'
+import { API_BASE_URL, streamChat } from './chat'
 import { makeSSEResponse, sseFrame } from '../test/sse'
 
 describe('streamChat', () => {
@@ -12,7 +12,7 @@ describe('streamChat', () => {
 
     expect(deltas).toEqual(['Hel', 'lo ', 'there'])
     expect(fetch).toHaveBeenCalledWith(
-      'http://localhost:8000/api/chat',
+      `${API_BASE_URL}/api/chat`,
       expect.objectContaining({ method: 'POST' }),
     )
   })
