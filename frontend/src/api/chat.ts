@@ -2,7 +2,7 @@
 // Backend base URL is configurable so this UI can point at any bot
 // instance that speaks the same /api/chat SSE contract.
 export const API_BASE_URL: string =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+  import.meta.env.VITE_API_BASE_URL || ''
 
 export type ChatRole = 'user' | 'assistant'
 
