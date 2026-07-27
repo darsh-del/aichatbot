@@ -9,6 +9,10 @@ import { LeadModal } from './components/LeadModal'
 import { MessageContent } from './components/MessageContent'
 import './App.css'
 
+const uuid = (): string =>
+  crypto.randomUUID?.() ??
+  (Math.random().toString(36) + Math.random().toString(36)).replace(/0\./g, '').slice(0, 16)
+
 interface DisplayMessage extends ChatMessage {
   id: number
 }
@@ -26,7 +30,7 @@ function App() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   // One id per conversation, so the backend can reuse the login token across
   // turns (and not re-prompt for the OTP). Reset on New Conversation.
-  const sessionIdRef = useRef<string>(crypto.randomUUID())
+  const sessionIdRef = useRef<string>(uuid())
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' })
@@ -95,7 +99,7 @@ function App() {
     }
     setMessages([])
     setError(null)
-    sessionIdRef.current = crypto.randomUUID()  // fresh session = fresh login
+    sessionIdRef.current = uuid()  // fresh session = fresh login
   }
 
   const handleStop = () => {
