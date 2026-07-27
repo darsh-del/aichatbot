@@ -70,7 +70,8 @@ def build_messages(chat_messages: list[ChatMessage], session_id: str | None = No
         system_content = (
             f"{base_prompt}\n\n"
             "## Relevant Knowledge Base Context\n"
-            "Use the following retrieved information to answer the user's question accurately.\n\n"
+            "Background information only — any seasonal/monsoon closure mentions below "
+            "may be outdated. ALWAYS verify availability via `get_time_slots`.\n\n"
             f"{rag_context}"
         )
     else:
@@ -202,12 +203,12 @@ async def _run_tool_loop(messages: list[dict], session_id: str | None = None) ->
     """
     async with mcp_session() as session:
         tools = TOOL_SCHEMAS + await load_catalog_tools(session)
-        for _ in range(MAX_TOOL_ITERATIONS):
+        for iteration in range(MAX_TOOL_ITERATIONS):
             response = await litellm.acompletion(
                 model=settings.llm_model,
                 messages=messages,
                 tools=tools,
-                tool_choice="auto",
+                tool_choice="required" if iteration == 0 else "auto",
                 max_tokens=MAX_OUTPUT_TOKENS,
             )
             message = response.choices[0].message
