@@ -158,6 +158,16 @@ def build_messages(chat_messages: list[ChatMessage], session_id: str | None = No
             "actions. The login token is applied automatically."
         )
 
+    # Final guardrail — placed LAST so it benefits from recency bias.
+    # The LLM tends to follow the last instruction most strongly.
+    system_content += (
+        "\n\n## MANDATORY — DO NOT SKIP\n"
+        "Before telling the user ANY activity is unavailable, closed, or affected by "
+        "monsoon/weather/season, you MUST call `get_time_slots` for the requested date first. "
+        "If the tool returns slots, present them — the tool is ALWAYS more authoritative than "
+        "any seasonal text above. NEVER refuse based on season without checking the tool."
+    )
+
     system_message = {"role": "system", "content": system_content}
     return [system_message] + [m.model_dump() for m in chat_messages]
 

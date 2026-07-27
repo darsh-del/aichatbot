@@ -119,6 +119,19 @@ jobs:
     # manual approval before prod deploys.
     environment: production
     steps:
+      - name: Verify deploy secrets exist
+        run: |
+          if [ -z "$HOST" ] || [ -z "$SSH_USER" ] || [ -z "$KEY" ]; then
+            echo "::error::Missing deploy secrets (EC2_HOST, EC2_USER, or EC2_SSH_KEY)."
+            echo "Add them at: Settings → Environments → production → Environment secrets."
+            exit 1
+          fi
+          echo "Deploy secrets present."
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          SSH_USER: ${{ secrets.EC2_USER }}
+          KEY: ${{ secrets.EC2_SSH_KEY }}
+
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.2
         with:
