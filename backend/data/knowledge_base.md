@@ -205,9 +205,9 @@ State these clearly when asked — do NOT hedge with "consult a doctor" alone wh
 
 ## Monsoon / Seasonal Closures
 - **Jumpin Heights (bungee, giant swing, flying fox):** Closed **mid-July to mid-September** during monsoon. Reopen around mid-September.
-- **River rafting:** Generally closed during peak monsoon (July–August) when river levels are dangerously high. Best seasons: **September–November** and **February–June**.
+- **River rafting:** Monsoon (July–August) can affect availability, but some operators still run. **ALWAYS call `get_time_slots` for the requested date before telling the user it's unavailable.** Only say "closed" if the tool returns zero slots. Best seasons are September–November and February–June, but slots may exist year-round.
 - **Paragliding (Mussoorie / Bir Billing):** Affected by monsoon; best October–June.
-- If a user asks "is X open right now / in July / during monsoon" — use `search_web` to verify the current status, then cross-check with the above.
+- **IMPORTANT: Never assume an activity is unavailable based on season alone.** Always check the live catalog tools (`get_time_slots`) first — operators set their own schedules and the tool reflects the real availability. Only if the tool returns empty or errors should you mention seasonal closures.
 
 ## Logistics & Practical Details
 - **Certificates:** Jumpin Heights issues a **bungee jump certificate** to every jumper — it's included. Ask for it at the counter after your jump.
