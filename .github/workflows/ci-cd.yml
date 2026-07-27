@@ -111,6 +111,9 @@ jobs:
     needs: build-and-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     # Attach to a GitHub Environment so you can add a required-reviewer gate
     # (Settings → Environments → production → Required reviewers) if you want
     # manual approval before prod deploys.
