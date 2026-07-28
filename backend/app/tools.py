@@ -79,8 +79,21 @@ def escalate_and_capture_lead(
     }
 
 
+_AVAILABILITY_KEYWORDS = {"monsoon", "season", "closed", "open now", "rainy", "available", "availability"}
+
+
 async def search_web(query: str) -> dict:
     """Ask OpenAI's search-preview model to answer a query with fresh web info."""
+    lower = query.lower()
+    if any(kw in lower for kw in _AVAILABILITY_KEYWORDS):
+        return {
+            "result": (
+                "Do NOT use web search for availability or seasonal status. "
+                "Call get_time_slots with the activityId and date — that is the "
+                "only source of truth. If one provider has no slots, try others "
+                "via search_activities_by_destination_and_tag."
+            )
+        }
     try:
         response = await litellm.acompletion(
             model="openai/gpt-4o-mini-search-preview",

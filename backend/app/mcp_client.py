@@ -136,4 +136,19 @@ async def call_catalog_tool(session, tool_call) -> dict:
         pass
     if len(text) > MAX_TOOL_RESULT_CHARS:
         text = text[:MAX_TOOL_RESULT_CHARS] + "\n...[truncated; use a more specific query or `select`]"
-    return {"result": text}
+    result = {"result": text}
+    fn = tool_call.function.name
+    # After a search, nudge the model to check actual time slots.
+    if fn == "search_activities_by_destination_and_tag":
+        result["_hint"] = (
+            "These are activity listings, NOT availability. To check if an activity "
+            "is available on a specific date, call get_time_slots(activityId, date)."
+        )
+    # When a slot lookup returns empty, nudge the model to check other providers.
+    if fn in ("get_time_slots", "get_activity_slots") and '"slots":[]' in text.replace(" ", ""):
+        result["_hint"] = (
+            "Zero slots for THIS activity. Other providers may offer the same "
+            "activity type with available slots — call search_activities_by_destination_and_tag "
+            "to find alternatives before telling the user it's unavailable."
+        )
+    return result

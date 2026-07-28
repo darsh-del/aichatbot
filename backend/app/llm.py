@@ -204,9 +204,14 @@ async def _run_tool_loop(messages: list[dict], session_id: str | None = None) ->
     async with mcp_session() as session:
         mcp_tools = await load_catalog_tools(session)
         all_tools = TOOL_SCHEMAS + mcp_tools
+        # First iteration: MCP catalog + escalate (but NOT search_web — it returns
+        # monsoon/seasonal web results that override live tool data).
+        first_iter_tools = [
+            t for t in all_tools if t["function"]["name"] != "search_web"
+        ] if mcp_tools else all_tools
         for iteration in range(MAX_TOOL_ITERATIONS):
-            if iteration == 0 and mcp_tools:
-                iter_tools = mcp_tools
+            if iteration < 2 and mcp_tools:
+                iter_tools = first_iter_tools
                 iter_choice = "required"
             else:
                 iter_tools = all_tools
