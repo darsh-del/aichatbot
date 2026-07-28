@@ -202,13 +202,20 @@ async def _run_tool_loop(messages: list[dict], session_id: str | None = None) ->
     Returns the accumulated message history, ready for a final streamed call.
     """
     async with mcp_session() as session:
-        tools = TOOL_SCHEMAS + await load_catalog_tools(session)
+        mcp_tools = await load_catalog_tools(session)
+        all_tools = TOOL_SCHEMAS + mcp_tools
         for iteration in range(MAX_TOOL_ITERATIONS):
+            if iteration == 0 and mcp_tools:
+                iter_tools = mcp_tools
+                iter_choice = "required"
+            else:
+                iter_tools = all_tools
+                iter_choice = "auto"
             response = await litellm.acompletion(
                 model=settings.llm_model,
                 messages=messages,
-                tools=tools,
-                tool_choice="required" if iteration == 0 else "auto",
+                tools=iter_tools,
+                tool_choice=iter_choice,
                 max_tokens=MAX_OUTPUT_TOKENS,
             )
             message = response.choices[0].message
