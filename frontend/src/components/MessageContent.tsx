@@ -14,6 +14,7 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, role })
 
   const ticketMatch = content.match(/LEAD-\d{5}/)
   const ticketId = ticketMatch ? ticketMatch[0] : null
+  const hasCartLink = content.includes('bucketlistt.com/experiences/cart')
 
   return (
     <div className="assistant-card">
@@ -22,6 +23,25 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, role })
       </div>
 
       <div className="assistant-card-body">
+        {hasCartLink && (
+          <div className="cart-redirect-card">
+            <div className="cart-card-header">
+              <span className="cart-badge">🛒 Added to Cart</span>
+            </div>
+            <p className="cart-card-desc">
+              Your items are ready! Complete payment on Bucketlistt to confirm your booking.
+            </p>
+            <a
+              href="https://www.bucketlistt.com/experiences/cart"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="cart-pay-btn"
+            >
+              Go to Cart & Pay →
+            </a>
+          </div>
+        )}
+
         {ticketId && (
           <div className="lead-ticket-card">
             <div className="ticket-header">

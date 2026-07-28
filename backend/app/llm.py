@@ -146,7 +146,7 @@ def build_messages(chat_messages: list[ChatMessage], session_id: str | None = No
             "providers and get truncated. For timings, take an activity's `_id` and call "
             "`get_time_slots(activityId, date=<today>)`.\n\n"
             "For checkout you cannot take payment yourself — after adding to the cart, give the user the "
-            "cart link https://www.bucketlistt.com/cart so they can review and pay there (logged in with "
+            "cart link https://www.bucketlistt.com/experiences/cart so they can review and pay there (logged in with "
             "the same phone number)."
         )
 

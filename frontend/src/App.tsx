@@ -55,6 +55,7 @@ function App() {
     const controller = new AbortController()
     abortRef.current = controller
 
+    let fullContent = ''
     try {
       await streamChat(
         {
@@ -62,6 +63,7 @@ function App() {
           session_id: sessionIdRef.current,
         },
         (delta) => {
+          fullContent += delta
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantMessage.id ? { ...m, content: m.content + delta } : m,
@@ -70,6 +72,9 @@ function App() {
         },
         { signal: controller.signal },
       )
+      if (fullContent.includes('bucketlistt.com/experiences/cart')) {
+        window.open('https://www.bucketlistt.com/experiences/cart', '_blank')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.')
     } finally {
