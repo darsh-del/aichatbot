@@ -7,14 +7,20 @@ interface MessageContentProps {
   role: 'user' | 'assistant'
 }
 
+const CART_URL = 'https://www.bucketlistt.com/experiences/cart'
+const CART_URL_RE = /https?:\/\/(?:www\.)?bucketlistt\.com\/cart\b(?![\w/])/g
+
 export const MessageContent: React.FC<MessageContentProps> = ({ content, role }) => {
   if (role === 'user') {
     return <div className="user-bubble-text">{content}</div>
   }
 
-  const ticketMatch = content.match(/LEAD-\d{5}/)
+  // Rewrite any old /cart links to /experiences/cart before rendering
+  const normalized = content.replace(CART_URL_RE, CART_URL)
+
+  const ticketMatch = normalized.match(/LEAD-\d{5}/)
   const ticketId = ticketMatch ? ticketMatch[0] : null
-  const hasCartLink = content.includes('bucketlistt.com/experiences/cart')
+  const hasCartLink = normalized.includes('bucketlistt.com/experiences/cart')
 
   return (
     <div className="assistant-card">

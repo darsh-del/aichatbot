@@ -7,7 +7,8 @@ resolves.
 """
 import os
 
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
-os.environ.setdefault("LLM_MODEL", "gpt-4o-mini")
+os.environ.setdefault("LLM_MODEL", "anthropic/claude-haiku-4-5")
 os.environ.setdefault("SYSTEM_PROMPT_FILE", "data/knowledge_base.md")
 os.environ.setdefault("CORS_ORIGINS", "http://localhost:5173")

@@ -2,10 +2,9 @@
 
 - `escalate_and_capture_lead`: Capture high-value group booking leads or human agent requests,
   saving them to backend/data/leads.json and generating an escalation ticket reference.
-- `search_web`: Fresh web-search fallback via OpenAI's gpt-4o-mini-search-preview. Used only
+- `search_web`: Fresh web-search fallback via Claude's web_search server-side tool. Used only
   when the KB and MCP catalog don't have an answer (e.g. current season status, weather,
-  time-sensitive info). Adds ~$0.025 per invocation, so the system prompt tells the model
-  to reach for it sparingly.
+  time-sensitive info). The system prompt tells the model to reach for it sparingly.
 
 Live catalog/availability data (destinations, activities, real-time slots) comes from the
 bucketlistt MCP server instead — see app/mcp_client.py. That client is deliberately
@@ -18,7 +17,7 @@ import random
 import time
 from pathlib import Path
 
-import litellm
+import anthropic
 
 LEADS_FILE = Path(__file__).parent.parent / "data" / "leads.json"
 
@@ -82,8 +81,18 @@ def escalate_and_capture_lead(
 _AVAILABILITY_KEYWORDS = {"monsoon", "season", "closed", "open now", "rainy", "available", "availability"}
 
 
+_aclient: anthropic.AsyncAnthropic | None = None
+
+
+def _get_aclient() -> anthropic.AsyncAnthropic:
+    global _aclient
+    if _aclient is None:
+        _aclient = anthropic.AsyncAnthropic()
+    return _aclient
+
+
 async def search_web(query: str) -> dict:
-    """Ask OpenAI's search-preview model to answer a query with fresh web info."""
+    """Use Claude's web_search server-side tool to answer a query with fresh web info."""
     lower = query.lower()
     if any(kw in lower for kw in _AVAILABILITY_KEYWORDS):
         return {
@@ -95,12 +104,14 @@ async def search_web(query: str) -> dict:
             )
         }
     try:
-        response = await litellm.acompletion(
-            model="openai/gpt-4o-mini-search-preview",
+        response = await _get_aclient().messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=1024,
+            tools=[{"type": "web_search_20260209", "name": "web_search"}],
             messages=[{"role": "user", "content": query}],
-            web_search_options={"search_context_size": "low"},
         )
-        return {"result": response.choices[0].message.content or ""}
+        text_parts = [b.text for b in response.content if hasattr(b, "text")]
+        return {"result": "\n".join(text_parts) or ""}
     except Exception as exc:  # pylint: disable=broad-except
         return {"error": f"web search failed: {exc}"}
 
