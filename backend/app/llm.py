@@ -28,19 +28,18 @@ from app.schemas import ChatMessage
 from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
 from app.tools import TOOL_SCHEMAS, dispatch_tool
 
-# ponytail: fixed cap on tool-call round trips rather than unbounded looping -
-# guards against a model that never stops requesting tools. Set to 8 so a full
-# hierarchy drill-down (experience -> activities -> slots) plus an error-recovery
-# retry fits without the loop cutting the model off mid-chain.
 MAX_TOOL_ITERATIONS = 8
-
-# Bounds worst-case cost per turn — a normal answer is well under this.
 MAX_OUTPUT_TOKENS = 1500
+
+# -- Cached base prompt (file doesn't change at runtime) ---------------------
+_base_prompt_cache: str | None = None
 
 
 def _load_base_prompt() -> str:
-    """Read the base system-prompt / knowledge-base file configured via SYSTEM_PROMPT_FILE."""
-    return Path(settings.system_prompt_file).read_text(encoding="utf-8")
+    global _base_prompt_cache
+    if _base_prompt_cache is None:
+        _base_prompt_cache = Path(settings.system_prompt_file).read_text(encoding="utf-8")
+    return _base_prompt_cache
 
 
 def build_messages(chat_messages: list[ChatMessage], session_id: str | None = None) -> list[dict]:
@@ -189,28 +188,60 @@ def _inject_auth_token(call, session_id: str | None) -> None:
     call.function.arguments = json.dumps(args)
 
 
-async def _run_tool_loop(messages: list[dict], session_id: str | None = None) -> list[dict]:
-    """Call the model, executing any requested tool calls, until it stops
-    asking for tools (or MAX_TOOL_ITERATIONS is hit).
+_TOOL_STATUS_LABELS = {
+    "get_destinations": "Fetching destinations…",
+    "get_experiences": "Looking up providers…",
+    "get_experience": "Looking up provider…",
+    "get_activities": "Fetching activities…",
+    "get_activity": "Fetching activity details…",
+    "search_activities_by_destination_and_tag": "Searching activities…",
+    "get_activity_slots": "Checking availability…",
+    "get_time_slots": "Checking time slots…",
+    "get_activity_addons": "Fetching add-ons…",
+    "send_otp": "Sending OTP…",
+    "verify_otp": "Verifying OTP…",
+    "add_to_cart": "Adding to cart…",
+    "get_cart": "Fetching cart…",
+    "update_cart_item": "Updating cart…",
+    "remove_from_cart": "Removing from cart…",
+    "get_my_bookings": "Fetching bookings…",
+    "search_web": "Searching the web…",
+    "escalate_and_capture_lead": "Creating support ticket…",
+}
 
-    Tools come from the local TOOL_SCHEMAS (escalate_and_capture_lead) and, if
-    MCP_SERVER_URL is set, bucketlistt's catalog + auth + cart tools. When a
-    session already has a cached authToken (from an earlier verify_otp), it is
-    injected into authenticated calls so the user isn't asked to re-OTP; a fresh
-    token returned by verify_otp is cached for the rest of the session.
 
-    Returns the accumulated message history, ready for a final streamed call.
+async def _execute_tool(call, session, session_id: str | None) -> dict:
+    """Execute a single tool call and return the result dict."""
+    if call.function.name in MCP_ALLOWED_TOOLS:
+        _inject_auth_token(call, session_id)
+        result = await call_catalog_tool(session, call)
+        if call.function.name == "verify_otp":
+            set_token(session_id, extract_token(result.get("result", "")))
+    else:
+        result = await dispatch_tool(call.function.name, call.function.arguments)
+    return result
+
+
+async def _run_tool_loop(
+    messages: list[dict],
+    session_id: str | None = None,
+    on_status: callable = None,
+) -> list[dict]:
+    """Call the model with tools until it stops requesting them.
+
+    Optimizations vs. the original:
+    - Independent tool calls within one iteration run in parallel via asyncio.gather
+    - tool_choice="required" only for the first iteration (was 2)
+    - Status callbacks let the SSE stream show progress during the tool loop
     """
     async with mcp_session() as session:
         mcp_tools = await load_catalog_tools(session)
         all_tools = TOOL_SCHEMAS + mcp_tools
-        # First iteration: MCP catalog + escalate (but NOT search_web — it returns
-        # monsoon/seasonal web results that override live tool data).
         first_iter_tools = [
             t for t in all_tools if t["function"]["name"] != "search_web"
         ] if mcp_tools else all_tools
         for iteration in range(MAX_TOOL_ITERATIONS):
-            if iteration < 2 and mcp_tools:
+            if iteration < 1 and mcp_tools:
                 iter_tools = first_iter_tools
                 iter_choice = "required"
             else:
@@ -222,28 +253,43 @@ async def _run_tool_loop(messages: list[dict], session_id: str | None = None) ->
                 tools=iter_tools,
                 tool_choice=iter_choice,
                 max_tokens=MAX_OUTPUT_TOKENS,
+                num_retries=2,
+                timeout=30,
             )
             message = response.choices[0].message
             tool_calls = getattr(message, "tool_calls", None)
             if not tool_calls:
                 break
             messages.append(message.model_dump())
-            for call in tool_calls:
-                if call.function.name in MCP_ALLOWED_TOOLS:
-                    _inject_auth_token(call, session_id)
-                    result = await call_catalog_tool(session, call)
-                    if call.function.name == "verify_otp":
-                        set_token(session_id, extract_token(result.get("result", "")))
-                else:
-                    result = await dispatch_tool(call.function.name, call.function.arguments)
-                messages.append(
-                    {
+
+            if on_status:
+                names = [c.function.name for c in tool_calls]
+                label = _TOOL_STATUS_LABELS.get(names[0], "Working…")
+                on_status(label)
+
+            # verify_otp must run alone (token caching order matters).
+            has_verify = any(c.function.name == "verify_otp" for c in tool_calls)
+
+            if len(tool_calls) == 1 or has_verify:
+                for call in tool_calls:
+                    result = await _execute_tool(call, session, session_id)
+                    messages.append({
                         "role": "tool",
                         "tool_call_id": call.id,
                         "name": call.function.name,
                         "content": json.dumps(result),
-                    }
+                    })
+            else:
+                results = await asyncio.gather(
+                    *(_execute_tool(c, session, session_id) for c in tool_calls)
                 )
+                for call, result in zip(tool_calls, results):
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "name": call.function.name,
+                        "content": json.dumps(result),
+                    })
     return messages
 
 
@@ -269,16 +315,24 @@ async def stream_chat_response(
     client-side stream never just drops.
     """
     try:
-        # build_messages does blocking I/O (a sync OpenAI embedding call + a sync
-        # Weaviate query in retrieve()). Running it directly on the event loop
-        # serializes every concurrent request behind it, so offload to a thread.
+        status_events: list[str] = []
+
+        def _on_status(label: str) -> None:
+            status_events.append(label)
+
         messages = await asyncio.to_thread(build_messages, chat_messages, session_id)
-        messages = await _run_tool_loop(messages, session_id)
+        messages = await _run_tool_loop(messages, session_id, on_status=_on_status)
+
+        for s in status_events:
+            yield _sse({"status": s, "done": False})
+
         response = await litellm.acompletion(
             model=settings.llm_model,
             messages=messages,
             stream=True,
             max_tokens=MAX_OUTPUT_TOKENS,
+            num_retries=2,
+            timeout=30,
         )
         async for chunk in response:
             delta = chunk.choices[0].delta.content or ""
@@ -286,6 +340,4 @@ async def stream_chat_response(
                 yield _sse({"delta": delta, "done": False})
         yield _sse({"delta": "", "done": True})
     except Exception as exc:  # pylint: disable=broad-except
-        # Any failure (LLM call, tool execution, etc.) must still close the
-        # stream with done: true, per the API contract.
         yield _sse({"delta": "", "done": True, "error": _error_message(exc)})

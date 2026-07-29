@@ -17,9 +17,10 @@ export interface ChatRequest {
 }
 
 export interface ChatStreamFrame {
-  delta: string
+  delta?: string
   done: boolean
   error?: string
+  status?: string
 }
 
 export interface HealthResponse {
@@ -50,9 +51,9 @@ export async function getHealth(
 export async function streamChat(
   request: ChatRequest,
   onDelta: (delta: string) => void,
-  options: { baseUrl?: string; signal?: AbortSignal } = {},
+  options: { baseUrl?: string; signal?: AbortSignal; onStatus?: (status: string) => void } = {},
 ): Promise<void> {
-  const { baseUrl = API_BASE_URL, signal } = options
+  const { baseUrl = API_BASE_URL, signal, onStatus } = options
 
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
@@ -80,6 +81,7 @@ export async function streamChat(
     if (dataLines.length === 0) return false
 
     const payload = JSON.parse(dataLines.join('')) as ChatStreamFrame
+    if (payload.status && onStatus) onStatus(payload.status)
     if (payload.delta) onDelta(payload.delta)
     if (payload.done) {
       if (payload.error) throw new Error(payload.error)

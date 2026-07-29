@@ -1,16 +1,26 @@
 """FastAPI application entrypoint. Thin route handlers only - business
 logic lives in app.llm / app.tools.
 """
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from app.config import settings
 from app.llm import stream_chat_response
+from app.mcp_client import close_persistent_session
 from app.rate_limit import RateLimitMiddleware
 from app.schemas import ChatRequest
 
-app = FastAPI(title="Chatbot Backend")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await close_persistent_session()
+
+
+app = FastAPI(title="Chatbot Backend", lifespan=lifespan)
 
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(

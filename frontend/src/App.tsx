@@ -25,6 +25,7 @@ function App() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false)
+  const [toolStatus, setToolStatus] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
@@ -51,6 +52,7 @@ function App() {
     setMessages([...history, assistantMessage])
     setInput('')
     setIsStreaming(true)
+    setToolStatus(null)
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -64,13 +66,14 @@ function App() {
         },
         (delta) => {
           fullContent += delta
+          setToolStatus(null)
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantMessage.id ? { ...m, content: m.content + delta } : m,
             ),
           )
         },
-        { signal: controller.signal },
+        { signal: controller.signal, onStatus: setToolStatus },
       )
       if (fullContent.includes('bucketlistt.com/experiences/cart')) {
         window.open('https://www.bucketlistt.com/experiences/cart', '_blank')
@@ -79,6 +82,7 @@ function App() {
       setError(err instanceof Error ? err.message : 'Something went wrong.')
     } finally {
       setIsStreaming(false)
+      setToolStatus(null)
       abortRef.current = null
     }
   }
@@ -172,7 +176,7 @@ function App() {
                     <span />
                     <span />
                   </div>
-                  <span className="typing-label">Searching Bucketlistt Knowledge Base...</span>
+                  <span className="typing-label">{toolStatus || 'Searching Bucketlistt Knowledge Base...'}</span>
                 </div>
               </div>
             </div>

@@ -89,6 +89,7 @@ def test_chat_rejects_missing_messages_field():
 
 def test_chat_streams_expected_sse_frame_sequence(monkeypatch):
     monkeypatch.setattr("app.llm.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("app.mcp_client.settings", type("S", (), {"mcp_server_url": ""})())
 
     response = client.post(
         "/api/chat",

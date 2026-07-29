@@ -13,8 +13,10 @@ The authToken from verify_otp flows through the conversation naturally — the
 LLM sees it in the tool result and passes it into subsequent authenticated
 tool calls. Each user's token is scoped to their conversation.
 """
+import asyncio
 import json
 import re
+import time
 from contextlib import AsyncExitStack, asynccontextmanager
 
 import litellm.experimental_mcp_client as litellm_mcp
@@ -47,39 +49,100 @@ ALLOWED_TOOLS = {
 }
 
 
-@asynccontextmanager
-async def mcp_session():
-    """Yield a live catalog-tools session, or None if MCP is unconfigured/unreachable.
+_persistent_stack: AsyncExitStack | None = None
+_persistent_session: ClientSession | None = None
+_session_lock = asyncio.Lock()
 
-    Only connection setup is guarded — once yielded, a mid-request failure
-    propagates normally and is handled by stream_chat_response's existing
-    catch-all, same as any other LLM/tool failure.
+
+async def _get_or_create_session() -> ClientSession | None:
+    """Return a persistent MCP session, creating one if needed.
+
+    Reuses the same TCP+TLS connection across requests instead of
+    opening a new one per user message (~300-500ms saved per request).
     """
+    global _persistent_stack, _persistent_session
     if not settings.mcp_server_url:
-        yield None
-        return
+        return None
 
-    async with AsyncExitStack() as stack:
+    async with _session_lock:
+        if _persistent_session is not None:
+            return _persistent_session
         try:
+            stack = AsyncExitStack()
+            await stack.__aenter__()
             read, write, _ = await stack.enter_async_context(
                 streamablehttp_client(settings.mcp_server_url)
             )
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
+            _persistent_stack = stack
+            _persistent_session = session
+            return session
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[mcp_client] unavailable: {exc}. Catalog tools disabled for this request.")
-            yield None
-            return
+            print(f"[mcp_client] unavailable: {exc}. Catalog tools disabled.")
+            return None
 
+
+async def close_persistent_session() -> None:
+    """Tear down the persistent MCP session (called on app shutdown)."""
+    global _persistent_stack, _persistent_session
+    async with _session_lock:
+        if _persistent_stack:
+            await _persistent_stack.aclose()
+        _persistent_stack = None
+        _persistent_session = None
+
+
+async def _reset_session() -> None:
+    """Force-close and recreate the session on next call (after a mid-request failure)."""
+    global _persistent_stack, _persistent_session
+    async with _session_lock:
+        if _persistent_stack:
+            try:
+                await _persistent_stack.aclose()
+            except Exception:  # pylint: disable=broad-except
+                pass
+        _persistent_stack = None
+        _persistent_session = None
+
+
+@asynccontextmanager
+async def mcp_session():
+    """Yield a live catalog-tools session, or None if MCP is unconfigured/unreachable.
+
+    Uses a persistent connection; if the session fails mid-request, the caller's
+    error handling catches it and the next request will create a fresh session.
+    """
+    session = await _get_or_create_session()
+    try:
         yield session
+    except Exception:
+        await _reset_session()
+        raise
+
+
+# -- Tool schema cache (schemas don't change at runtime) ---------------------
+_cached_tools: list[dict] = []
+_tools_cached_at: float = 0.0
+_TOOLS_CACHE_TTL = 300  # 5 minutes
 
 
 async def load_catalog_tools(session) -> list[dict]:
-    """OpenAI-format schemas for the whitelisted read-only catalog tools only."""
+    """OpenAI-format schemas for the whitelisted catalog tools.
+
+    Cached in-memory for 5 minutes — avoids a network round-trip to the MCP
+    server on every single user message.
+    """
+    global _cached_tools, _tools_cached_at
     if session is None:
         return []
+    now = time.monotonic()
+    if _cached_tools and (now - _tools_cached_at) < _TOOLS_CACHE_TTL:
+        return _cached_tools
     tools = await litellm_mcp.load_mcp_tools(session, format="openai")
-    return [t for t in tools if t["function"]["name"] in ALLOWED_TOOLS]
+    _cached_tools = [t for t in tools if t["function"]["name"] in ALLOWED_TOOLS]
+    _tools_cached_at = now
+    return _cached_tools
 
 
 # Hard ceiling per tool result — only hit after field-stripping, as a last resort.
