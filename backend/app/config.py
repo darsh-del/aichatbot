@@ -3,7 +3,8 @@
 Key settings:
     ANTHROPIC_API_KEY      — required, used by litellm (Claude) and web search
     OPENAI_API_KEY         — required for RAG embeddings (text-embedding-3-small)
-    LLM_MODEL              — litellm model string, default anthropic/claude-haiku-4-5
+    LLM_MODEL              — litellm model string, default anthropic/claude-sonnet-5
+    WEB_SEARCH_MODEL       — Anthropic model for web search, default claude-haiku-4-5
     SYSTEM_PROMPT_FILE     — path to base system-prompt markdown file
     CORS_ORIGINS           — comma-separated list of allowed CORS origins
     PORT                   — uvicorn port
@@ -25,7 +26,8 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str
     openai_api_key: str = ""
-    llm_model: str = "anthropic/claude-haiku-4-5"
+    llm_model: str = "anthropic/claude-sonnet-5"
+    web_search_model: str = "claude-haiku-4-5"
     system_prompt_file: str = "data/knowledge_base.md"
     cors_origins: str = "http://localhost:5173"
     port: int = 8000

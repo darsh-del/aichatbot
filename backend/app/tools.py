@@ -19,6 +19,8 @@ from pathlib import Path
 
 import anthropic
 
+from app.config import settings
+
 LEADS_FILE = Path(__file__).parent.parent / "data" / "leads.json"
 
 
@@ -105,7 +107,7 @@ async def search_web(query: str) -> dict:
         }
     try:
         response = await _get_aclient().messages.create(
-            model="claude-haiku-4-5",
+            model=settings.web_search_model,
             max_tokens=1024,
             tools=[{"type": "web_search_20260209", "name": "web_search"}],
             messages=[{"role": "user", "content": query}],

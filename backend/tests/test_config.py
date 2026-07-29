@@ -32,7 +32,7 @@ def test_settings_defaults(monkeypatch):
 
     settings = Settings(_env_file=None)
 
-    assert settings.llm_model == "anthropic/claude-haiku-4-5"
+    assert settings.llm_model == "anthropic/claude-sonnet-5"
     assert settings.system_prompt_file == "data/knowledge_base.md"
     assert settings.cors_origins_list == ["http://localhost:5173"]
     assert settings.port == 8000
