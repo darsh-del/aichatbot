@@ -207,11 +207,16 @@ async def call_catalog_tool(session, tool_call) -> dict:
             "These are activity listings, NOT availability. To check if an activity "
             "is available on a specific date, call get_time_slots(activityId, date)."
         )
-    # When a slot lookup returns empty, nudge the model to check other providers.
-    if fn in ("get_time_slots", "get_activity_slots") and '"slots":[]' in text.replace(" ", ""):
-        result["_hint"] = (
-            "Zero slots for THIS activity. Other providers may offer the same "
-            "activity type with available slots — call search_activities_by_destination_and_tag "
-            "to find alternatives before telling the user it's unavailable."
-        )
+    if fn in ("get_time_slots", "get_activity_slots"):
+        if '"slots":[]' in text.replace(" ", ""):
+            result["_hint"] = (
+                "Zero slots for THIS activity. Other providers may offer the same "
+                "activity type with available slots — call search_activities_by_destination_and_tag "
+                "to find alternatives before telling the user it's unavailable."
+            )
+        else:
+            result["_hint"] = (
+                "Show ONLY the slot start time (e.g. '10:00 AM'). Do NOT show or "
+                "fabricate an end time — the data does not have meaningful end times."
+            )
     return result

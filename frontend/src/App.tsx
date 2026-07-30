@@ -13,6 +13,29 @@ const uuid = (): string =>
   crypto.randomUUID?.() ??
   (Math.random().toString(36) + Math.random().toString(36)).replace(/0\./g, '').slice(0, 16)
 
+const LOADING_PHRASES = [
+  'Scouting the best adventure spots...',
+  'Checking the wind conditions...',
+  'Measuring the bungee cord...',
+  'Consulting the mountain guides...',
+  'Scanning the rapids...',
+  'Tuning the adventure radar...',
+  'Mapping your next thrill...',
+  'Lacing up the hiking boots...',
+  'Polishing the safety gear...',
+  'Asking the river gods...',
+  'Counting the parachutes...',
+  'Warming up for takeoff...',
+  'Loading up the adventure van...',
+  'Calibrating the altimeter...',
+  'Untangling the ropes...',
+  'Brewing some adventure fuel...',
+  'Chasing the adrenaline...',
+  'Gearing up for the expedition...',
+  'Scouring the trails ahead...',
+  'Summoning the adventure spirit...',
+]
+
 interface DisplayMessage extends ChatMessage {
   id: number
 }
@@ -26,6 +49,7 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false)
   const [toolStatus, setToolStatus] = useState<string | null>(null)
+  const [loadingPhrase, setLoadingPhrase] = useState(LOADING_PHRASES[0])
 
   const abortRef = useRef<AbortController | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
@@ -40,6 +64,14 @@ function App() {
   useEffect(() => {
     scrollToBottom()
   }, [messages, isStreaming])
+
+  useEffect(() => {
+    if (!isStreaming) return
+    const id = setInterval(() => {
+      setLoadingPhrase(LOADING_PHRASES[Math.floor(Math.random() * LOADING_PHRASES.length)])
+    }, 2500)
+    return () => clearInterval(id)
+  }, [isStreaming])
 
   const sendPromptMessage = async (text: string) => {
     if (!text || isStreaming) return
@@ -176,7 +208,7 @@ function App() {
                     <span />
                     <span />
                   </div>
-                  <span className="typing-label">{toolStatus || 'Searching Bucketlistt Knowledge Base...'}</span>
+                  <span className="typing-label">{toolStatus || loadingPhrase}</span>
                 </div>
               </div>
             </div>
