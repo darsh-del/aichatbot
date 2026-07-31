@@ -26,3 +26,13 @@ build/
 .vscode/
 .idea/
 .claude/
+
+# Graphify Knowledge Graph outputs
+graphify-out/
+.graphify-out/
+.graphify*
+
+# Agent Guidelines & Rules
+AGENTS.md
+.agents/
+
