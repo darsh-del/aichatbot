@@ -5,12 +5,15 @@ on restart and don't sync across workers. Fine for a single uvicorn worker on a
 demo/free-tier deploy. Upgrade to a Redis-backed limiter (e.g. slowapi) if you
 run multiple workers or need limits to survive restarts.
 """
+import logging
 from collections import defaultdict, deque
 from time import monotonic
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 CHAT_LIMIT_PER_MINUTE = 20
 CHAT_PATH = "/api/chat"
@@ -39,6 +42,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             hits.popleft()
 
         if len(hits) >= CHAT_LIMIT_PER_MINUTE:
+            logger.warning("Rate limit hit: IP=%s (%d requests in last 60s)", ip, len(hits))
             return JSONResponse(
                 {"detail": "Too many requests. Please slow down."},
                 status_code=429,

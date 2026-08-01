@@ -13,6 +13,7 @@ chatbot has no way to log a user in, touch a cart, or move money.
 """
 import inspect
 import json
+import logging
 import random
 import time
 from pathlib import Path
@@ -20,6 +21,8 @@ from pathlib import Path
 import anthropic
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 LEADS_FILE = Path(__file__).parent.parent / "data" / "leads.json"
 
@@ -64,10 +67,12 @@ def escalate_and_capture_lead(
     try:
         data = json.loads(LEADS_FILE.read_text(encoding="utf-8"))
     except Exception:
+        logger.warning("Could not read %s, starting fresh", LEADS_FILE)
         data = []
 
     data.append(lead_record)
     LEADS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    logger.info("Lead captured: %s (name=%s, phone=%s, urgency=%s)", ticket_id, name or "Guest", phone or "n/a", urgency)
 
     return {
         "status": "success",
@@ -97,6 +102,7 @@ async def search_web(query: str) -> dict:
     """Use Claude's web_search server-side tool to answer a query with fresh web info."""
     lower = query.lower()
     if any(kw in lower for kw in _AVAILABILITY_KEYWORDS):
+        logger.info("search_web blocked — availability keyword in query: %s", query[:100])
         return {
             "result": (
                 "Do NOT use web search for availability or seasonal status. "
@@ -105,6 +111,8 @@ async def search_web(query: str) -> dict:
                 "via search_activities_by_destination_and_tag."
             )
         }
+    t0 = time.perf_counter()
+    logger.info("search_web query: %s", query[:150])
     try:
         response = await _get_aclient().messages.create(
             model=settings.web_search_model,
@@ -113,8 +121,10 @@ async def search_web(query: str) -> dict:
             messages=[{"role": "user", "content": query}],
         )
         text_parts = [b.text for b in response.content if hasattr(b, "text")]
+        logger.info("search_web completed in %.3fs (%d text parts)", time.perf_counter() - t0, len(text_parts))
         return {"result": "\n".join(text_parts) or ""}
     except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("search_web failed after %.3fs", time.perf_counter() - t0)
         return {"error": f"web search failed: {exc}"}
 
 
@@ -212,9 +222,13 @@ async def dispatch_tool(name: str, arguments: str) -> dict:
     """Execute a tool call by name, given its JSON-encoded arguments string."""
     func = _TOOL_REGISTRY.get(name)
     if func is None:
+        logger.warning("dispatch_tool: unknown tool '%s'", name)
         return {"error": f"unknown tool: {name}"}
     kwargs = json.loads(arguments) if arguments else {}
+    t0 = time.perf_counter()
+    logger.info("dispatch_tool: %s(%s)", name, ", ".join(f"{k}={v!r}" for k, v in kwargs.items()))
     result = func(**kwargs)
     if inspect.isawaitable(result):
         result = await result
+    logger.info("dispatch_tool: %s completed in %.3fs", name, time.perf_counter() - t0)
     return result

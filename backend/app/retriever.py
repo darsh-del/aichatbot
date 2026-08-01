@@ -4,8 +4,12 @@ Loaded lazily so the backend still starts even if Weaviate is not configured
 (useful for local dev without a Weaviate instance).
 """
 
+import logging
 import os
+import time
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 _client = None
 _collection = None
@@ -30,8 +34,10 @@ def _get_collection():
     # instance (docker-compose `weaviate` service) runs with anonymous access.
     if not weaviate_url:
         _weaviate_available = False
+        logger.info("WEAVIATE_URL not set — RAG disabled, using flat KB only")
         return None
 
+    t0 = time.perf_counter()
     try:
         import weaviate
         from urllib.parse import urlparse
@@ -53,11 +59,11 @@ def _get_collection():
             )
         _collection = _client.collections.get("BucketlisttKB")
         _weaviate_available = True
+        logger.info("Weaviate connected in %.3fs — %s", time.perf_counter() - t0, weaviate_url)
         return _collection
     except Exception as exc:
         _weaviate_available = False
-        # Don't crash – log and degrade gracefully
-        print(f"[retriever] Weaviate init failed: {exc}. RAG disabled, using flat KB only.")
+        logger.error("Weaviate init failed after %.3fs: %s — RAG disabled, using flat KB only", time.perf_counter() - t0, exc)
         return None
 
 
@@ -74,23 +80,29 @@ def retrieve(query: str, top_k: int = 6) -> str:
     if collection is None:
         return ""
 
+    t_total = time.perf_counter()
     try:
         # Embed the query using OpenAI
+        t_embed = time.perf_counter()
         oai = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
         embedding_response = oai.embeddings.create(
             input=query,
             model="text-embedding-3-small",
         )
         query_vector = embedding_response.data[0].embedding
+        logger.info("Embedding took %.3fs for query: %s", time.perf_counter() - t_embed, query[:100])
 
         # Query Weaviate
+        t_search = time.perf_counter()
         result = collection.query.near_vector(
             near_vector=query_vector,
             limit=top_k,
             return_properties=["content", "url", "title", "page_type"],
         )
+        logger.info("Weaviate search took %.3fs — %d results", time.perf_counter() - t_search, len(result.objects) if result.objects else 0)
 
         if not result.objects:
+            logger.info("RAG retrieval: no results (total %.3fs)", time.perf_counter() - t_total)
             return ""
 
         # Format chunks into a clean context block
@@ -100,8 +112,9 @@ def retrieve(query: str, top_k: int = 6) -> str:
             source = f"[{props.get('page_type', 'page')}] {props.get('title', '')} ({props.get('url', '')})"
             chunks.append(f"Source: {source}\n{props.get('content', '')}")
 
+        logger.info("RAG retrieval complete: %d chunks in %.3fs", len(chunks), time.perf_counter() - t_total)
         return "\n\n---\n\n".join(chunks)
 
     except Exception as exc:
-        print(f"[retriever] Query failed: {exc}")
+        logger.exception("RAG retrieval failed after %.3fs", time.perf_counter() - t_total)
         return ""

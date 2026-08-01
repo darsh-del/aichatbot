@@ -14,6 +14,8 @@ StreamingResponse.
 """
 import asyncio
 import json
+import logging
+import time
 from datetime import date
 from pathlib import Path
 from typing import AsyncGenerator
@@ -21,6 +23,8 @@ from typing import AsyncGenerator
 import litellm
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 from app.mcp_client import ALLOWED_TOOLS as MCP_ALLOWED_TOOLS
 from app.mcp_client import call_catalog_tool, load_catalog_tools, mcp_session
 from app.retriever import retrieve
@@ -221,30 +225,42 @@ _TOOL_STATUS_LABELS = {
 
 async def _execute_tool(call, session, session_id: str | None) -> dict:
     """Execute a single tool call and return the result dict."""
-    if call.function.name in MCP_ALLOWED_TOOLS:
-        _inject_auth_token(call, session_id)
-        result = await call_catalog_tool(session, call)
-        if call.function.name == "verify_otp":
-            set_token(session_id, extract_token(result.get("result", "")))
-    else:
-        result = await dispatch_tool(call.function.name, call.function.arguments)
-    return result
+    tool_name = call.function.name
+    t0 = time.perf_counter()
+    logger.info("Executing tool: %s  args=%s", tool_name, call.function.arguments[:200] if call.function.arguments else "")
+    try:
+        if tool_name in MCP_ALLOWED_TOOLS:
+            _inject_auth_token(call, session_id)
+            result = await call_catalog_tool(session, call)
+            if tool_name == "verify_otp":
+                set_token(session_id, extract_token(result.get("result", "")))
+        else:
+            result = await dispatch_tool(tool_name, call.function.arguments)
+        elapsed = time.perf_counter() - t0
+        logger.info("Tool %s completed in %.3fs", tool_name, elapsed)
+        return result
+    except Exception:
+        logger.exception("Tool %s failed after %.3fs", tool_name, time.perf_counter() - t0)
+        raise
 
 
 async def _run_tool_loop(
     messages: list[dict],
     session_id: str | None = None,
-    on_status: callable = None,
-) -> list[dict]:
-    """Call the model with tools until it stops requesting them.
+) -> AsyncGenerator[str | tuple[str, str], None]:
+    """Run the tool-calling loop as an async generator.
 
-    Optimizations vs. the original:
-    - Independent tool calls within one iteration run in parallel via asyncio.gather
-    - tool_choice="required" only for the first iteration (was 2)
-    - Status callbacks let the SSE stream show progress during the tool loop
+    Yields status strings in real-time so the SSE stream can show live progress
+    during the (often multi-second) tool loop.  Modifies `messages` in place.
+
+    When the loop's final LLM call already contains the full answer (content,
+    no tool_calls), yields ("answer", content) so the caller can serve it
+    directly instead of making a redundant streaming LLM call.
     """
+    t_loop_start = time.perf_counter()
     async with mcp_session() as session:
         mcp_tools = await load_catalog_tools(session)
+        logger.info("Loaded %d MCP tools, %d local tools", len(mcp_tools), len(TOOL_SCHEMAS))
         all_tools = TOOL_SCHEMAS + mcp_tools
         first_iter_tools = [
             t for t in all_tools if t["function"]["name"] != "search_web"
@@ -256,6 +272,7 @@ async def _run_tool_loop(
             else:
                 iter_tools = all_tools
                 iter_choice = "auto"
+            t_llm = time.perf_counter()
             response = await litellm.acompletion(
                 model=settings.llm_model,
                 messages=messages,
@@ -265,16 +282,22 @@ async def _run_tool_loop(
                 num_retries=2,
                 timeout=30,
             )
+            logger.info("Tool-loop LLM call #%d took %.3fs (choice=%s)", iteration, time.perf_counter() - t_llm, iter_choice)
             message = response.choices[0].message
             tool_calls = getattr(message, "tool_calls", None)
             if not tool_calls:
+                content = getattr(message, "content", "") or ""
+                logger.info("Tool loop done — no more tool calls after %d iterations", iteration + 1)
+                if content:
+                    logger.info("Cached answer from tool loop (%d chars), skipping redundant streaming call", len(content))
+                    yield ("answer", content)
                 break
             messages.append(message.model_dump())
 
-            if on_status:
-                names = [c.function.name for c in tool_calls]
-                label = _TOOL_STATUS_LABELS.get(names[0], "Working…")
-                on_status(label)
+            names = [c.function.name for c in tool_calls]
+            logger.info("Iteration %d: model requested %d tools: %s", iteration, len(tool_calls), names)
+
+            yield _TOOL_STATUS_LABELS.get(names[0], "Working…")
 
             # verify_otp must run alone (token caching order matters).
             has_verify = any(c.function.name == "verify_otp" for c in tool_calls)
@@ -299,7 +322,7 @@ async def _run_tool_loop(
                         "name": call.function.name,
                         "content": json.dumps(result),
                     })
-    return messages
+    logger.info("Tool loop total: %.3fs", time.perf_counter() - t_loop_start)
 
 
 def _sse(payload: dict) -> str:
@@ -323,30 +346,44 @@ async def stream_chat_response(
     carries an `error` field instead of the generator raising, so the
     client-side stream never just drops.
     """
+    t_request = time.perf_counter()
     try:
-        status_events: list[str] = []
-
-        def _on_status(label: str) -> None:
-            status_events.append(label)
-
+        t0 = time.perf_counter()
         messages = await asyncio.to_thread(build_messages, chat_messages, session_id)
-        messages = await _run_tool_loop(messages, session_id, on_status=_on_status)
+        logger.info("build_messages took %.3fs (%d messages total)", time.perf_counter() - t0, len(messages))
 
-        for s in status_events:
-            yield _sse({"status": s, "done": False})
+        # Stream status events in real-time and capture the answer if the tool
+        # loop already generated it (avoids a redundant streaming LLM call).
+        cached_answer = None
+        async for event in _run_tool_loop(messages, session_id):
+            if isinstance(event, tuple):
+                cached_answer = event[1]
+            else:
+                yield _sse({"status": event, "done": False})
 
-        response = await litellm.acompletion(
-            model=settings.llm_model,
-            messages=messages,
-            stream=True,
-            max_tokens=MAX_OUTPUT_TOKENS,
-            num_retries=2,
-            timeout=30,
-        )
-        async for chunk in response:
-            delta = chunk.choices[0].delta.content or ""
-            if delta:
-                yield _sse({"delta": delta, "done": False})
-        yield _sse({"delta": "", "done": True})
+        if cached_answer:
+            yield _sse({"delta": cached_answer, "done": False})
+            yield _sse({"delta": "", "done": True})
+            logger.info("Request complete (cached answer) — total %.3fs", time.perf_counter() - t_request)
+        else:
+            t_stream = time.perf_counter()
+            response = await litellm.acompletion(
+                model=settings.llm_model,
+                messages=messages,
+                stream=True,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                num_retries=2,
+                timeout=30,
+            )
+            token_count = 0
+            async for chunk in response:
+                delta = chunk.choices[0].delta.content or ""
+                if delta:
+                    token_count += 1
+                    yield _sse({"delta": delta, "done": False})
+            logger.info("Final streaming response: %d chunks in %.3fs", token_count, time.perf_counter() - t_stream)
+            yield _sse({"delta": "", "done": True})
+            logger.info("Request complete — total %.3fs", time.perf_counter() - t_request)
     except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("Chat request failed after %.3fs", time.perf_counter() - t_request)
         yield _sse({"delta": "", "done": True, "error": _error_message(exc)})

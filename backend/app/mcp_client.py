@@ -15,6 +15,7 @@ tool calls. Each user's token is scoped to their conversation.
 """
 import asyncio
 import json
+import logging
 import re
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -24,6 +25,8 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_TOOLS = {
     # Browse (read-only, no auth)
@@ -67,6 +70,7 @@ async def _get_or_create_session() -> ClientSession | None:
     async with _session_lock:
         if _persistent_session is not None:
             return _persistent_session
+        t0 = time.perf_counter()
         try:
             stack = AsyncExitStack()
             await stack.__aenter__()
@@ -77,9 +81,10 @@ async def _get_or_create_session() -> ClientSession | None:
             await session.initialize()
             _persistent_stack = stack
             _persistent_session = session
+            logger.info("MCP session established in %.3fs — %s", time.perf_counter() - t0, settings.mcp_server_url)
             return session
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[mcp_client] unavailable: {exc}. Catalog tools disabled.")
+            logger.error("MCP unavailable after %.3fs: %s — catalog tools disabled", time.perf_counter() - t0, exc)
             return None
 
 
@@ -138,10 +143,13 @@ async def load_catalog_tools(session) -> list[dict]:
         return []
     now = time.monotonic()
     if _cached_tools and (now - _tools_cached_at) < _TOOLS_CACHE_TTL:
+        logger.debug("MCP tool schemas served from cache (%d tools)", len(_cached_tools))
         return _cached_tools
+    t0 = time.perf_counter()
     tools = await litellm_mcp.load_mcp_tools(session, format="openai")
     _cached_tools = [t for t in tools if t["function"]["name"] in ALLOWED_TOOLS]
     _tools_cached_at = now
+    logger.info("Loaded %d MCP tool schemas (of %d total) in %.3fs", len(_cached_tools), len(tools), time.perf_counter() - t0)
     return _cached_tools
 
 
@@ -188,7 +196,10 @@ def _slim(obj):
 
 async def call_catalog_tool(session, tool_call) -> dict:
     """Execute one whitelisted catalog tool call against the live MCP server."""
+    fn = tool_call.function.name
+    t0 = time.perf_counter()
     result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
+    logger.info("MCP call %s completed in %.3fs", fn, time.perf_counter() - t0)
     text = "\n".join(part.text for part in result.content if hasattr(part, "text"))
     text = text or str(result)
     # Strip bulky fields first (keeps useful data, shrinks size a lot); only if it
