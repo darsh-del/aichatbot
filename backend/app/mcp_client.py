@@ -173,8 +173,10 @@ _DROP_KEYS = {
     # Dropping them lets a multi-provider search fit without truncating later providers.
     "timeSlots",
 }
-_HTML_KEYS = {"description", "highlights", "inclusion", "exclusion", "subtitle"}
+_HTML_KEYS = {"description", "highlights", "inclusion", "exclusion", "subtitle", "eligibility"}
 _HTML_RE = re.compile(r"<[^>]+>")
+
+_SEARCH_KEEP = {"_id", "title", "actualPrice", "discountedPrice"}
 
 
 def _slim(obj):
@@ -194,22 +196,63 @@ def _slim(obj):
     return obj
 
 
+def _compact_search(raw):
+    """Reduce a tag-search result to just provider names + activity IDs/titles/prices."""
+    if not isinstance(raw, dict) or "data" not in raw:
+        return _slim(raw)
+    out = {k: v for k, v in raw.items() if k != "data"}
+    out["data"] = []
+    for group in raw.get("data", []):
+        if not isinstance(group, dict):
+            out["data"].append(group)
+            continue
+        compact = {
+            "experience": group.get("experience"),
+            "experienceId": group.get("experienceId"),
+            "activities": [
+                {k: v for k, v in act.items() if k in _SEARCH_KEEP}
+                for act in group.get("activities", [])
+                if isinstance(act, dict)
+            ],
+        }
+        out["data"].append(compact)
+    return out
+
+
 async def call_catalog_tool(session, tool_call) -> dict:
-    """Execute one whitelisted catalog tool call against the live MCP server."""
+    """Execute one whitelisted catalog tool call against the live MCP server.
+
+    Retries once with a fresh session if the persistent connection went stale.
+    """
     fn = tool_call.function.name
     t0 = time.perf_counter()
-    result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
+    try:
+        result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
+    except Exception:
+        logger.warning("MCP call %s failed after %.3fs, retrying with fresh session", fn, time.perf_counter() - t0)
+        await _reset_session()
+        session = await _get_or_create_session()
+        if session is None:
+            raise
+        t0 = time.perf_counter()
+        result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
     logger.info("MCP call %s completed in %.3fs", fn, time.perf_counter() - t0)
     text = "\n".join(part.text for part in result.content if hasattr(part, "text"))
     text = text or str(result)
-    # Strip bulky fields first (keeps useful data, shrinks size a lot); only if it
-    # still exceeds the ceiling do we hard-truncate as a fallback.
+    raw_len = len(text)
     try:
-        text = json.dumps(_slim(json.loads(text)), separators=(",", ":"))
+        parsed = json.loads(text)
+        if fn == "search_activities_by_destination_and_tag":
+            text = json.dumps(_compact_search(parsed), separators=(",", ":"))
+        else:
+            text = json.dumps(_slim(parsed), separators=(",", ":"))
     except (ValueError, TypeError):
         pass
-    if len(text) > MAX_TOOL_RESULT_CHARS:
+    slimmed_len = len(text)
+    truncated = slimmed_len > MAX_TOOL_RESULT_CHARS
+    if truncated:
         text = text[:MAX_TOOL_RESULT_CHARS] + "\n...[truncated; use a more specific query or `select`]"
+    logger.info("MCP result %s: %d raw, %d slimmed%s", fn, raw_len, slimmed_len, f", TRUNCATED at {MAX_TOOL_RESULT_CHARS}" if truncated else "")
     result = {"result": text}
     fn = tool_call.function.name
     # After a search, nudge the model to check actual time slots.
