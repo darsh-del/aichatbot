@@ -18,6 +18,7 @@ import logging
 import time
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import AsyncGenerator
 
 import litellm
@@ -250,12 +251,9 @@ async def _run_tool_loop(
 ) -> AsyncGenerator[str | tuple[str, str], None]:
     """Run the tool-calling loop as an async generator.
 
-    Yields status strings in real-time so the SSE stream can show live progress
-    during the (often multi-second) tool loop.  Modifies `messages` in place.
-
-    When the loop's final LLM call already contains the full answer (content,
-    no tool_calls), yields ("answer", content) so the caller can serve it
-    directly instead of making a redundant streaming LLM call.
+    Every LLM call uses stream=True so the final answer streams token-by-token
+    via yield ("delta", text).  Tool calls are reassembled from stream chunks
+    transparently.  Status strings are yielded as plain strings.
     """
     t_loop_start = time.perf_counter()
     mcp_tools = await load_catalog_tools()
@@ -280,18 +278,60 @@ async def _run_tool_loop(
             max_tokens=MAX_OUTPUT_TOKENS,
             num_retries=2,
             timeout=30,
+            stream=True,
         )
+
+        # Consume the stream: yield content deltas in real-time, collect tool
+        # calls incrementally so we can execute them after the stream ends.
+        full_content = ""
+        tc_parts: dict[int, dict] = {}
+        async for chunk in response:
+            choices = chunk.choices
+            if not choices:
+                continue
+            delta = choices[0].delta
+            if delta.content:
+                full_content += delta.content
+                yield ("delta", delta.content)
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tc_parts:
+                        tc_parts[idx] = {"id": "", "function": {"name": "", "arguments": ""}}
+                    if tc.id:
+                        tc_parts[idx]["id"] = tc.id
+                    if tc.function:
+                        if tc.function.name:
+                            tc_parts[idx]["function"]["name"] += tc.function.name
+                        if tc.function.arguments:
+                            tc_parts[idx]["function"]["arguments"] += tc.function.arguments
+
         logger.info("Tool-loop LLM call #%d took %.3fs (choice=%s)", iteration, time.perf_counter() - t_llm, iter_choice)
-        message = response.choices[0].message
-        tool_calls = getattr(message, "tool_calls", None)
-        if not tool_calls:
-            content = getattr(message, "content", "") or ""
-            logger.info("Tool loop done — no more tool calls after %d iterations", iteration + 1)
-            if content:
-                logger.info("Cached answer from tool loop (%d chars), skipping redundant streaming call", len(content))
-                yield ("answer", content)
+
+        if not tc_parts:
+            logger.info("Tool loop done after %d iterations, streamed %d chars", iteration + 1, len(full_content))
             break
-        messages.append(message.model_dump())
+
+        # Reconstruct tool call objects and append assistant message
+        tool_calls = [
+            SimpleNamespace(
+                id=tc_parts[i]["id"],
+                function=SimpleNamespace(
+                    name=tc_parts[i]["function"]["name"],
+                    arguments=tc_parts[i]["function"]["arguments"],
+                ),
+            )
+            for i in sorted(tc_parts)
+        ]
+        messages.append({
+            "role": "assistant",
+            "content": full_content or None,
+            "tool_calls": [
+                {"id": c.id, "type": "function",
+                 "function": {"name": c.function.name, "arguments": c.function.arguments}}
+                for c in tool_calls
+            ],
+        })
 
         names = [c.function.name for c in tool_calls]
         logger.info("Iteration %d: model requested %d tools: %s", iteration, len(tool_calls), names)
@@ -350,38 +390,18 @@ async def stream_chat_response(
         messages = await asyncio.to_thread(build_messages, chat_messages, session_id)
         logger.info("build_messages took %.3fs (%d messages total)", time.perf_counter() - t0, len(messages))
 
-        # Stream status events in real-time and capture the answer if the tool
-        # loop already generated it (avoids a redundant streaming LLM call).
-        cached_answer = None
+        token_count = 0
         async for event in _run_tool_loop(messages, session_id):
             if isinstance(event, tuple):
-                cached_answer = event[1]
-            else:
-                yield _sse({"status": event, "done": False})
-
-        if cached_answer:
-            yield _sse({"delta": cached_answer, "done": False})
-            yield _sse({"delta": "", "done": True})
-            logger.info("Request complete (cached answer) — total %.3fs", time.perf_counter() - t_request)
-        else:
-            t_stream = time.perf_counter()
-            response = await litellm.acompletion(
-                model=settings.llm_model,
-                messages=messages,
-                stream=True,
-                max_tokens=MAX_OUTPUT_TOKENS,
-                num_retries=2,
-                timeout=30,
-            )
-            token_count = 0
-            async for chunk in response:
-                delta = chunk.choices[0].delta.content or ""
+                _, delta = event
                 if delta:
                     token_count += 1
                     yield _sse({"delta": delta, "done": False})
-            logger.info("Final streaming response: %d chunks in %.3fs", token_count, time.perf_counter() - t_stream)
-            yield _sse({"delta": "", "done": True})
-            logger.info("Request complete — total %.3fs", time.perf_counter() - t_request)
+            else:
+                yield _sse({"status": event, "done": False})
+
+        yield _sse({"delta": "", "done": True})
+        logger.info("Request complete — %d delta chunks, total %.3fs", token_count, time.perf_counter() - t_request)
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Chat request failed after %.3fs", time.perf_counter() - t_request)
         yield _sse({"delta": "", "done": True, "error": _error_message(exc)})
