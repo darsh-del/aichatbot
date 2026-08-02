@@ -22,7 +22,10 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 import litellm.experimental_mcp_client as litellm_mcp
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+try:
+    from mcp.client.streamable_http import streamablehttp_client
+except ImportError:
+    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 
 from app.config import settings
 
