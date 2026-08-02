@@ -26,7 +26,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 from app.mcp_client import ALLOWED_TOOLS as MCP_ALLOWED_TOOLS
-from app.mcp_client import call_catalog_tool, load_catalog_tools, mcp_session
+from app.mcp_client import call_catalog_tool, load_catalog_tools, get_session
 from app.retriever import retrieve
 from app.schemas import ChatMessage
 from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
@@ -258,70 +258,69 @@ async def _run_tool_loop(
     directly instead of making a redundant streaming LLM call.
     """
     t_loop_start = time.perf_counter()
-    async with mcp_session() as session:
-        mcp_tools = await load_catalog_tools(session)
-        logger.info("Loaded %d MCP tools, %d local tools", len(mcp_tools), len(TOOL_SCHEMAS))
-        all_tools = TOOL_SCHEMAS + mcp_tools
-        first_iter_tools = [
-            t for t in all_tools if t["function"]["name"] != "search_web"
-        ] if mcp_tools else all_tools
-        for iteration in range(MAX_TOOL_ITERATIONS):
-            if iteration < 1 and mcp_tools:
-                iter_tools = first_iter_tools
-                iter_choice = "required"
-            else:
-                iter_tools = all_tools
-                iter_choice = "auto"
-            t_llm = time.perf_counter()
-            response = await litellm.acompletion(
-                model=settings.llm_model,
-                messages=messages,
-                tools=iter_tools,
-                tool_choice=iter_choice,
-                max_tokens=MAX_OUTPUT_TOKENS,
-                num_retries=2,
-                timeout=30,
+    session = await get_session()
+    mcp_tools = await load_catalog_tools(session)
+    logger.info("Loaded %d MCP tools, %d local tools", len(mcp_tools), len(TOOL_SCHEMAS))
+    all_tools = TOOL_SCHEMAS + mcp_tools
+    first_iter_tools = [
+        t for t in all_tools if t["function"]["name"] != "search_web"
+    ] if mcp_tools else all_tools
+    for iteration in range(MAX_TOOL_ITERATIONS):
+        if iteration < 1 and mcp_tools:
+            iter_tools = first_iter_tools
+            iter_choice = "required"
+        else:
+            iter_tools = all_tools
+            iter_choice = "auto"
+        t_llm = time.perf_counter()
+        response = await litellm.acompletion(
+            model=settings.llm_model,
+            messages=messages,
+            tools=iter_tools,
+            tool_choice=iter_choice,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            num_retries=2,
+            timeout=30,
+        )
+        logger.info("Tool-loop LLM call #%d took %.3fs (choice=%s)", iteration, time.perf_counter() - t_llm, iter_choice)
+        message = response.choices[0].message
+        tool_calls = getattr(message, "tool_calls", None)
+        if not tool_calls:
+            content = getattr(message, "content", "") or ""
+            logger.info("Tool loop done — no more tool calls after %d iterations", iteration + 1)
+            if content:
+                logger.info("Cached answer from tool loop (%d chars), skipping redundant streaming call", len(content))
+                yield ("answer", content)
+            break
+        messages.append(message.model_dump())
+
+        names = [c.function.name for c in tool_calls]
+        logger.info("Iteration %d: model requested %d tools: %s", iteration, len(tool_calls), names)
+
+        yield _TOOL_STATUS_LABELS.get(names[0], "Working…")
+
+        has_verify = any(c.function.name == "verify_otp" for c in tool_calls)
+
+        if len(tool_calls) == 1 or has_verify:
+            for call in tool_calls:
+                result = await _execute_tool(call, session, session_id)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.function.name,
+                    "content": json.dumps(result),
+                })
+        else:
+            results = await asyncio.gather(
+                *(_execute_tool(c, session, session_id) for c in tool_calls)
             )
-            logger.info("Tool-loop LLM call #%d took %.3fs (choice=%s)", iteration, time.perf_counter() - t_llm, iter_choice)
-            message = response.choices[0].message
-            tool_calls = getattr(message, "tool_calls", None)
-            if not tool_calls:
-                content = getattr(message, "content", "") or ""
-                logger.info("Tool loop done — no more tool calls after %d iterations", iteration + 1)
-                if content:
-                    logger.info("Cached answer from tool loop (%d chars), skipping redundant streaming call", len(content))
-                    yield ("answer", content)
-                break
-            messages.append(message.model_dump())
-
-            names = [c.function.name for c in tool_calls]
-            logger.info("Iteration %d: model requested %d tools: %s", iteration, len(tool_calls), names)
-
-            yield _TOOL_STATUS_LABELS.get(names[0], "Working…")
-
-            # verify_otp must run alone (token caching order matters).
-            has_verify = any(c.function.name == "verify_otp" for c in tool_calls)
-
-            if len(tool_calls) == 1 or has_verify:
-                for call in tool_calls:
-                    result = await _execute_tool(call, session, session_id)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": call.id,
-                        "name": call.function.name,
-                        "content": json.dumps(result),
-                    })
-            else:
-                results = await asyncio.gather(
-                    *(_execute_tool(c, session, session_id) for c in tool_calls)
-                )
-                for call, result in zip(tool_calls, results):
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": call.id,
-                        "name": call.function.name,
-                        "content": json.dumps(result),
-                    })
+            for call, result in zip(tool_calls, results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.function.name,
+                    "content": json.dumps(result),
+                })
     logger.info("Tool loop total: %.3fs", time.perf_counter() - t_loop_start)
 
 

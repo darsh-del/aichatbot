@@ -18,7 +18,7 @@ import json
 import logging
 import re
 import time
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack
 
 import litellm.experimental_mcp_client as litellm_mcp
 from mcp import ClientSession
@@ -114,19 +114,13 @@ async def _reset_session() -> None:
         _persistent_session = None
 
 
-@asynccontextmanager
-async def mcp_session():
-    """Yield a live catalog-tools session, or None if MCP is unconfigured/unreachable.
+async def get_session() -> ClientSession | None:
+    """Return the persistent MCP session (creating one if needed).
 
-    Uses a persistent connection; if the session fails mid-request, the caller's
-    error handling catches it and the next request will create a fresh session.
+    Safe to call from async generators — no context manager / cancel scope.
+    Stale-session recovery is handled inside call_catalog_tool's retry logic.
     """
-    session = await _get_or_create_session()
-    try:
-        yield session
-    except Exception:
-        await _reset_session()
-        raise
+    return await _get_or_create_session()
 
 
 # -- Tool schema cache (schemas don't change at runtime) ---------------------
