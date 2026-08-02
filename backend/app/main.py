@@ -10,7 +10,6 @@ from fastapi.responses import StreamingResponse
 
 from app.config import settings
 from app.llm import stream_chat_response
-from app.mcp_client import close_persistent_session
 from app.rate_limit import RateLimitMiddleware
 from app.schemas import ChatRequest
 
@@ -31,8 +30,7 @@ async def lifespan(app: FastAPI):
         bool(settings.weaviate_url),
     )
     yield
-    logger.info("Shutting down — closing MCP session")
-    await close_persistent_session()
+    logger.info("Shutting down")
 
 
 app = FastAPI(title="Chatbot Backend", lifespan=lifespan)

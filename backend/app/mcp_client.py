@@ -13,7 +13,6 @@ The authToken from verify_otp flows through the conversation naturally — the
 LLM sees it in the tool result and passes it into subsequent authenticated
 tool calls. Each user's token is scoped to their conversation.
 """
-import asyncio
 import json
 import logging
 import re
@@ -55,72 +54,21 @@ ALLOWED_TOOLS = {
 }
 
 
-_persistent_stack: AsyncExitStack | None = None
-_persistent_session: ClientSession | None = None
-_session_lock = asyncio.Lock()
+async def _fresh_session():
+    """Create a fresh MCP session. Returns (stack, session).
 
-
-async def _get_or_create_session() -> ClientSession | None:
-    """Return a persistent MCP session, creating one if needed.
-
-    Reuses the same TCP+TLS connection across requests instead of
-    opening a new one per user message (~300-500ms saved per request).
+    Caller MUST call stack.aclose() when done — never hold the session across
+    an async generator yield, or anyio cancel scopes will leak into Starlette's
+    task groups and crash the streaming response.
     """
-    global _persistent_stack, _persistent_session
-    if not settings.mcp_server_url:
-        return None
-
-    async with _session_lock:
-        if _persistent_session is not None:
-            return _persistent_session
-        t0 = time.perf_counter()
-        try:
-            stack = AsyncExitStack()
-            await stack.__aenter__()
-            read, write, _ = await stack.enter_async_context(
-                streamablehttp_client(settings.mcp_server_url)
-            )
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
-            _persistent_stack = stack
-            _persistent_session = session
-            logger.info("MCP session established in %.3fs — %s", time.perf_counter() - t0, settings.mcp_server_url)
-            return session
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.error("MCP unavailable after %.3fs: %s — catalog tools disabled", time.perf_counter() - t0, exc)
-            return None
-
-
-async def close_persistent_session() -> None:
-    """Tear down the persistent MCP session (called on app shutdown)."""
-    global _persistent_stack, _persistent_session
-    async with _session_lock:
-        if _persistent_stack:
-            await _persistent_stack.aclose()
-        _persistent_stack = None
-        _persistent_session = None
-
-
-async def _reset_session() -> None:
-    """Force-close and recreate the session on next call (after a mid-request failure)."""
-    global _persistent_stack, _persistent_session
-    async with _session_lock:
-        if _persistent_stack:
-            try:
-                await _persistent_stack.aclose()
-            except Exception:  # pylint: disable=broad-except
-                pass
-        _persistent_stack = None
-        _persistent_session = None
-
-
-async def get_session() -> ClientSession | None:
-    """Return the persistent MCP session (creating one if needed).
-
-    Safe to call from async generators — no context manager / cancel scope.
-    Stale-session recovery is handled inside call_catalog_tool's retry logic.
-    """
-    return await _get_or_create_session()
+    stack = AsyncExitStack()
+    await stack.__aenter__()
+    read, write, _ = await stack.enter_async_context(
+        streamablehttp_client(settings.mcp_server_url)
+    )
+    session = await stack.enter_async_context(ClientSession(read, write))
+    await session.initialize()
+    return stack, session
 
 
 # -- Tool schema cache (schemas don't change at runtime) ---------------------
@@ -129,45 +77,41 @@ _tools_cached_at: float = 0.0
 _TOOLS_CACHE_TTL = 300  # 5 minutes
 
 
-async def load_catalog_tools(session) -> list[dict]:
+async def load_catalog_tools() -> list[dict]:
     """OpenAI-format schemas for the whitelisted catalog tools.
 
     Cached in-memory for 5 minutes — avoids a network round-trip to the MCP
     server on every single user message.
     """
     global _cached_tools, _tools_cached_at
-    if session is None:
+    if not settings.mcp_server_url:
         return []
     now = time.monotonic()
     if _cached_tools and (now - _tools_cached_at) < _TOOLS_CACHE_TTL:
         logger.debug("MCP tool schemas served from cache (%d tools)", len(_cached_tools))
         return _cached_tools
     t0 = time.perf_counter()
-    tools = await litellm_mcp.load_mcp_tools(session, format="openai")
-    _cached_tools = [t for t in tools if t["function"]["name"] in ALLOWED_TOOLS]
-    _tools_cached_at = now
-    logger.info("Loaded %d MCP tool schemas (of %d total) in %.3fs", len(_cached_tools), len(tools), time.perf_counter() - t0)
+    stack, session = await _fresh_session()
+    try:
+        tools = await litellm_mcp.load_mcp_tools(session, format="openai")
+        _cached_tools = [t for t in tools if t["function"]["name"] in ALLOWED_TOOLS]
+        _tools_cached_at = now
+        logger.info("Loaded %d MCP tool schemas (of %d total) in %.3fs", len(_cached_tools), len(tools), time.perf_counter() - t0)
+    finally:
+        try:
+            await stack.aclose()
+        except Exception:
+            pass
     return _cached_tools
 
 
 # Hard ceiling per tool result — only hit after field-stripping, as a last resort.
-# Sized so a full multi-provider search (e.g. all rafting distances across both
-# providers) survives slimming without truncation dropping later providers.
 MAX_TOOL_RESULT_CHARS = 16000
 
-# Bulky, model-useless fields to drop from tool results. These (image/media URL
-# arrays, HTML blobs) are most of the payload size; stripping them keeps the
-# useful fields (title, _id, prices, distances, slots, phone) so a multi-provider
-# result still fits without blind truncation cutting off later providers — which
-# was hiding the 24km rafting option behind Dronecraft's media bulk.
 _DROP_KEYS = {
     "media", "images", "primaryMedia", "logo", "image", "__v", "clientId",
-    # pure metadata never needed to answer a user question
     "createdAt", "updatedAt", "uniqueCode", "advancePercentage", "highlightedOrder",
     "order", "forAgent", "isHighlighted", "isApproved", "category", "address",
-    # timeSlots arrays are the single biggest bulk and are NOT needed here — actual
-    # bookable times come from get_activity_slots (returns them under data.slots).
-    # Dropping them lets a multi-provider search fit without truncating later providers.
     "timeSlots",
 }
 _HTML_KEYS = {"description", "highlights", "inclusion", "exclusion", "subtitle", "eligibility"}
@@ -216,26 +160,8 @@ def _compact_search(raw):
     return out
 
 
-async def call_catalog_tool(session, tool_call) -> dict:
-    """Execute one whitelisted catalog tool call against the live MCP server.
-
-    Retries once with a fresh session if the persistent connection went stale.
-    """
-    fn = tool_call.function.name
-    t0 = time.perf_counter()
-    try:
-        result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
-    except Exception:
-        logger.warning("MCP call %s failed after %.3fs, retrying with fresh session", fn, time.perf_counter() - t0)
-        await _reset_session()
-        session = await _get_or_create_session()
-        if session is None:
-            raise
-        t0 = time.perf_counter()
-        result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
-    logger.info("MCP call %s completed in %.3fs", fn, time.perf_counter() - t0)
-    text = "\n".join(part.text for part in result.content if hasattr(part, "text"))
-    text = text or str(result)
+def _postprocess(fn: str, text: str) -> dict:
+    """Slim, truncate, and add hints to a tool result."""
     raw_len = len(text)
     try:
         parsed = json.loads(text)
@@ -251,8 +177,6 @@ async def call_catalog_tool(session, tool_call) -> dict:
         text = text[:MAX_TOOL_RESULT_CHARS] + "\n...[truncated; use a more specific query or `select`]"
     logger.info("MCP result %s: %d raw, %d slimmed%s", fn, raw_len, slimmed_len, f", TRUNCATED at {MAX_TOOL_RESULT_CHARS}" if truncated else "")
     result = {"result": text}
-    fn = tool_call.function.name
-    # After a search, nudge the model to check actual time slots.
     if fn == "search_activities_by_destination_and_tag":
         result["_hint"] = (
             "These are activity listings, NOT availability. To check if an activity "
@@ -271,3 +195,26 @@ async def call_catalog_tool(session, tool_call) -> dict:
                 "fabricate an end time — the data does not have meaningful end times."
             )
     return result
+
+
+async def call_catalog_tool(tool_call) -> dict:
+    """Execute one whitelisted catalog tool call against the live MCP server.
+
+    Creates a fresh session per call so anyio cancel scopes are fully contained
+    and never leak into the caller's task (which would crash Starlette's
+    streaming response).
+    """
+    fn = tool_call.function.name
+    t0 = time.perf_counter()
+    stack, session = await _fresh_session()
+    try:
+        result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
+    finally:
+        try:
+            await stack.aclose()
+        except Exception:
+            pass
+    logger.info("MCP call %s completed in %.3fs", fn, time.perf_counter() - t0)
+    text = "\n".join(part.text for part in result.content if hasattr(part, "text"))
+    text = text or str(result)
+    return _postprocess(fn, text)

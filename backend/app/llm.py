@@ -26,7 +26,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 from app.mcp_client import ALLOWED_TOOLS as MCP_ALLOWED_TOOLS
-from app.mcp_client import call_catalog_tool, load_catalog_tools, get_session
+from app.mcp_client import call_catalog_tool, load_catalog_tools
 from app.retriever import retrieve
 from app.schemas import ChatMessage
 from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
@@ -223,7 +223,7 @@ _TOOL_STATUS_LABELS = {
 }
 
 
-async def _execute_tool(call, session, session_id: str | None) -> dict:
+async def _execute_tool(call, session_id: str | None) -> dict:
     """Execute a single tool call and return the result dict."""
     tool_name = call.function.name
     t0 = time.perf_counter()
@@ -231,7 +231,7 @@ async def _execute_tool(call, session, session_id: str | None) -> dict:
     try:
         if tool_name in MCP_ALLOWED_TOOLS:
             _inject_auth_token(call, session_id)
-            result = await call_catalog_tool(session, call)
+            result = await call_catalog_tool(call)
             if tool_name == "verify_otp":
                 set_token(session_id, extract_token(result.get("result", "")))
         else:
@@ -258,8 +258,7 @@ async def _run_tool_loop(
     directly instead of making a redundant streaming LLM call.
     """
     t_loop_start = time.perf_counter()
-    session = await get_session()
-    mcp_tools = await load_catalog_tools(session)
+    mcp_tools = await load_catalog_tools()
     logger.info("Loaded %d MCP tools, %d local tools", len(mcp_tools), len(TOOL_SCHEMAS))
     all_tools = TOOL_SCHEMAS + mcp_tools
     first_iter_tools = [
@@ -303,7 +302,7 @@ async def _run_tool_loop(
 
         if len(tool_calls) == 1 or has_verify:
             for call in tool_calls:
-                result = await _execute_tool(call, session, session_id)
+                result = await _execute_tool(call, session_id)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.id,
@@ -312,7 +311,7 @@ async def _run_tool_loop(
                 })
         else:
             results = await asyncio.gather(
-                *(_execute_tool(c, session, session_id) for c in tool_calls)
+                *(_execute_tool(c, session_id) for c in tool_calls)
             )
             for call, result in zip(tool_calls, results):
                 messages.append({
