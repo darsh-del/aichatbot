@@ -18,7 +18,6 @@ import logging
 import time
 from datetime import date
 from pathlib import Path
-from types import SimpleNamespace
 from typing import AsyncGenerator
 
 import litellm
@@ -32,6 +31,12 @@ from app.retriever import retrieve
 from app.schemas import ChatMessage
 from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
 from app.tools import TOOL_SCHEMAS, dispatch_tool
+
+class _DotDict(dict):
+    """Dict that also supports attribute access — litellm expects both."""
+    __getattr__ = dict.__getitem__
+    __setattr__ = dict.__setitem__
+
 
 MAX_TOOL_ITERATIONS = 8
 MAX_OUTPUT_TOKENS = 1500
@@ -312,11 +317,13 @@ async def _run_tool_loop(
             logger.info("Tool loop done after %d iterations, streamed %d chars", iteration + 1, len(full_content))
             break
 
-        # Reconstruct tool call objects and append assistant message
+        # Reconstruct tool call objects that support both obj.key and obj["key"]
+        # (litellm internals use dict-style access on tool calls)
         tool_calls = [
-            SimpleNamespace(
+            _DotDict(
                 id=tc_parts[i]["id"],
-                function=SimpleNamespace(
+                type="function",
+                function=_DotDict(
                     name=tc_parts[i]["function"]["name"],
                     arguments=tc_parts[i]["function"]["arguments"],
                 ),
