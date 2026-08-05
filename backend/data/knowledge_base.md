@@ -209,6 +209,30 @@ State these clearly when asked — do NOT hedge with "consult a doctor" alone wh
 - **Paragliding (Mussoorie / Bir Billing):** Best October–June — but check `get_time_slots` before saying unavailable.
 - **RULE: NEVER say "closed", "unavailable", or "affected by monsoon" without first calling `get_time_slots` for the specific activity and date.** The tool is the single source of truth for availability.
 
+## Google Maps Locations
+When sharing an activity location, include the Google Maps link so the user can navigate easily.
+
+| Provider / Site | Location | Google Maps |
+|---|---|---|
+| **Jumpin Heights** (Bungee, Giant Swing, Flying Fox) | Mohanchatti Village, ~25 km from Rishikesh | https://maps.google.com/?q=Jumpin+Heights+Rishikesh |
+| **Himalayan Bungee / Bungy (117 m)** | Behind Indian Oil petrol pump, Shivpuri, ~15 km from Tapovan | https://maps.google.com/?q=Himalayan+Bungee+Shivpuri+Rishikesh |
+| **Splash Bungy** | Near Papa Homestay, Shivpuri, ~12 km from Tapovan | https://maps.google.com/?q=Splash+Bungy+Shivpuri+Rishikesh |
+| **Maa Ganga Bungee (219 m)** | Devprayag (Sangam of Alaknanda & Bhagirathi), ~60 km from Rishikesh | https://maps.google.com/?q=Maa+Ganga+Bungee+Devprayag |
+| **Thrill Factory** | Behind Indian Oil Petrol Pump, Shivpuri, ~18 km from Rishikesh | https://maps.google.com/?q=Thrill+Factory+Shivpuri+Rishikesh |
+| **Dronecraft River Rafting** (office & pickup) | Badrinath Road, Tapovan, Rishikesh | https://maps.google.com/?q=Dronecraft+River+Rafting+Rishikesh |
+| **River Rafting — Shivpuri start** (16 km route) | Shivpuri, ~17 km from Rishikesh | https://maps.google.com/?q=Shivpuri+River+Rafting+Rishikesh |
+| **River Rafting — Brahmpuri start** (9–12 km route) | Brahmpuri, ~10 km from Rishikesh | https://maps.google.com/?q=Brahmpuri+Rafting+Point+Rishikesh |
+| **River Rafting — Marine Drive start** (24–26 km route) | Marine Drive, ~28 km from Rishikesh | https://maps.google.com/?q=Marine+Drive+Rafting+Point+Rishikesh |
+| **WhyNotFly Paragliding** | Rishikesh (jungle safari to take-off site) | https://maps.google.com/?q=WhyNotFly+Paragliding+Rishikesh |
+| **Paragliding — Mussoorie** | Mussoorie, Uttarakhand | https://maps.google.com/?q=Paragliding+Mussoorie |
+
+When a user asks "where is it" or "how to reach" or "location", share the relevant Google Maps link along with the landmark/distance info above. Always include the link — don't just describe the location.
+
+## Transportation & Pickup Details
+- **Himalayan Bungee & Maa Ganga Bungee:** Transportation (pickup from Rishikesh/Tapovan) is available **only once per day at 9:00 AM**. If the user asks about transport or pickup for these two providers, clearly mention the single 9 AM departure. Users who miss the 9 AM pickup must arrange their own transport to the site.
+- **Dronecraft River Rafting:** Complimentary pickup & drop from/to the starting pickup point is included with every booking.
+- **Jumpin Heights:** Users typically arrange their own transport or taxi to Mohanchatti (~25 km from Rishikesh). No scheduled shuttle.
+
 ## Logistics & Practical Details
 - **Certificates:** Jumpin Heights issues a **bungee jump certificate** to every jumper — it's included. Ask for it at the counter after your jump.
 - **Phones/valuables during a bungee jump:** Not allowed to keep loose items, phones, or jewellery during the jump — safety risk. Lockers or a bag-minding area is available at the venue.

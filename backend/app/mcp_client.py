@@ -111,13 +111,17 @@ MAX_TOOL_RESULT_CHARS = 16000
 _DROP_KEYS = {
     "media", "images", "primaryMedia", "logo", "image", "__v", "clientId",
     "createdAt", "updatedAt", "uniqueCode", "advancePercentage", "highlightedOrder",
-    "order", "forAgent", "isHighlighted", "isApproved", "category", "address",
+    "order", "forAgent", "isHighlighted", "isApproved", "category",
     "timeSlots",
 }
 _HTML_KEYS = {"description", "highlights", "inclusion", "exclusion", "subtitle", "eligibility"}
 _HTML_RE = re.compile(r"<[^>]+>")
+# Longer limit for fields that carry critical differentiating info (inclusions, descriptions).
+_HTML_TRUNC_LONG = 800
+_HTML_TRUNC_SHORT = 300
+_LONG_HTML_KEYS = {"description", "inclusion", "exclusion", "highlights"}
 
-_SEARCH_KEEP = {"_id", "title", "actualPrice", "discountedPrice"}
+_SEARCH_KEEP = {"_id", "title", "actualPrice", "discountedPrice", "subtitle"}
 
 
 def _slim(obj):
@@ -128,7 +132,8 @@ def _slim(obj):
             if k in _DROP_KEYS:
                 continue
             if k in _HTML_KEYS and isinstance(v, str):
-                out[k] = _HTML_RE.sub("", v).strip()[:300]
+                limit = _HTML_TRUNC_LONG if k in _LONG_HTML_KEYS else _HTML_TRUNC_SHORT
+                out[k] = _HTML_RE.sub("", v).strip()[:limit]
             else:
                 out[k] = _slim(v)
         return out
@@ -138,7 +143,12 @@ def _slim(obj):
 
 
 def _compact_search(raw):
-    """Reduce a tag-search result to just provider names + activity IDs/titles/prices."""
+    """Reduce a tag-search result to provider names + activity summaries.
+
+    Keeps subtitle and a short description snippet so the LLM can
+    differentiate activities (e.g. Dronecraft's drone+DSLR coverage vs plain
+    rafting) without needing a follow-up get_activity call.
+    """
     if not isinstance(raw, dict) or "data" not in raw:
         return _slim(raw)
     out = {k: v for k, v in raw.items() if k != "data"}
@@ -147,14 +157,24 @@ def _compact_search(raw):
         if not isinstance(group, dict):
             out["data"].append(group)
             continue
+        activities = []
+        for act in group.get("activities", []):
+            if not isinstance(act, dict):
+                continue
+            item = {k: v for k, v in act.items() if k in _SEARCH_KEEP}
+            # Keep a description snippet so the LLM sees what makes each
+            # activity unique (drone coverage, included perks, etc.)
+            desc = act.get("description", "")
+            if isinstance(desc, str) and desc:
+                item["description"] = _HTML_RE.sub("", desc).strip()[:200]
+            inclusion = act.get("inclusion", "")
+            if isinstance(inclusion, str) and inclusion:
+                item["inclusion"] = _HTML_RE.sub("", inclusion).strip()[:200]
+            activities.append(item)
         compact = {
             "experience": group.get("experience"),
             "experienceId": group.get("experienceId"),
-            "activities": [
-                {k: v for k, v in act.items() if k in _SEARCH_KEEP}
-                for act in group.get("activities", [])
-                if isinstance(act, dict)
-            ],
+            "activities": activities,
         }
         out["data"].append(compact)
     return out
