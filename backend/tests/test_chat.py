@@ -15,6 +15,7 @@ client = TestClient(app)
 class _FakeDelta:
     def __init__(self, content):
         self.content = content
+        self.tool_calls = None
 
 
 class _FakeChunkChoice:
