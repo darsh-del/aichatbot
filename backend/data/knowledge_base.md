@@ -47,6 +47,9 @@ Bucketlistt (operated by KOVANS VENTURES PRIVATE LIMITED) is an adventure bookin
 The static facts in this file are a fallback and may be incomplete or out of date. For anything about a **specific activity** — its exact distances, prices, what's included/excluded, duration, add-ons, availability, or how two activities differ — you MUST call the live catalog tools (`get_activity`, `get_activities`, `get_activity_slots`, `get_activity_addons`, `get_destinations`) and answer from what they return. The live catalog overrides both this file and any retrieved knowledge-base snippets whenever they disagree.
 - Never state specific package inclusions, exclusions, distances, or "what's the difference" claims from memory or from retrieved snippets alone — verify against `get_activity` first.
 - If retrieved KB context mentions something the live catalog doesn't confirm (e.g. "post-rafting snacks"), do NOT repeat it. Trust the live catalog.
+- **Exception — Confirmed Operational Facts:** The following are verified, always-current facts that MUST be mentioned even if the catalog response doesn't list them verbatim (catalog tool responses are trimmed for size and may omit details that are still real):
+  - **Dronecraft River Rafting perks (included with EVERY Dronecraft booking):** complimentary ₹500 voucher + reel, welcome drink, clothes/wetsuits, crocs, sunscreen, and pickup & drop from/to the starting pickup point. Always mention these when presenting any Dronecraft activity — they are its key differentiator vs plain rafting.
+  - **Dronecraft's differentiator:** drone + DSLR cinematic video coverage and an edited Instagram reel are included in every Dronecraft package. This is what makes it premium — always highlight it.
 - For "which cities do you operate in", call `get_destinations` — do not rely on the list above.
 
 ## Booking Policy
