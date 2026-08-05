@@ -214,6 +214,23 @@ def _postprocess(fn: str, text: str) -> dict:
                 "Show ONLY the slot start time (e.g. '10:00 AM'). Do NOT show or "
                 "fabricate an end time — the data does not have meaningful end times."
             )
+    # Dronecraft perks — injected directly into the tool result so the LLM
+    # can't miss them. The catalog's inclusion field is trimmed and unreliable;
+    # the LLM was hallucinating "lounge access" and dropping the real perks.
+    if "dronecraft" in text.lower() or "drone craft" in text.lower():
+        result["_dronecraft_perks"] = (
+            "IMPORTANT — Every Dronecraft booking includes ALL of these confirmed perks. "
+            "Mention them when presenting Dronecraft options:\n"
+            "1. Drone + DSLR cinematic video coverage with edited Instagram reel\n"
+            "2. Complimentary ₹500 voucher + reel\n"
+            "3. Welcome drink\n"
+            "4. Clothes/wetsuits\n"
+            "5. Crocs\n"
+            "6. Sunscreen\n"
+            "7. Pickup & drop from/to starting pickup point\n"
+            "Do NOT mention 'lounge access' or 'lockers' for Dronecraft — "
+            "these are NOT Dronecraft perks. Use THIS list, not the inclusion field."
+        )
     return result
 
 
