@@ -1,11 +1,8 @@
 # Reverse proxy + automatic HTTPS (Let's Encrypt) for the chatbot subdomain.
-# Backend routes are already prefixed /api/* (see backend/app/main.py), so no
-# path rewriting is needed — Caddy just splits traffic by path prefix.
+# Backend-only — client wants chatbot.bucketlistt.com to serve the API,
+# not a standalone chat UI (the frontend embeds elsewhere, e.g. as a widget
+# on the main site). Backend routes are already prefixed /api/* (see
+# backend/app/main.py), so this just forwards everything as-is.
 chatbot.bucketlistt.com {
-	handle /api/* {
-		reverse_proxy backend:8000
-	}
-	handle {
-		reverse_proxy frontend:80
-	}
+	reverse_proxy backend:8000
 }

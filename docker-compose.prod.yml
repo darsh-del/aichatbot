@@ -45,8 +45,11 @@ services:
     restart: unless-stopped
 
   # Reverse proxy + automatic HTTPS for chatbot.bucketlistt.com — see ./Caddyfile.
-  # This is now the only publicly exposed service; backend/frontend are
-  # reachable only from other containers on this compose network.
+  # Backend-only (see Caddyfile comment) — this is now the only publicly
+  # exposed service; backend/frontend are reachable only from other
+  # containers on this compose network. The frontend service above still
+  # runs (harmless, not publicly routed) in case it's needed for internal
+  # testing — safe to remove entirely once you're sure it's not needed.
   caddy:
     image: caddy:2-alpine
     ports:
@@ -58,7 +61,6 @@ services:
       - caddy_config:/config
     depends_on:
       - backend
-      - frontend
     restart: unless-stopped
 
 volumes:
