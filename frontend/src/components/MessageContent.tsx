@@ -37,15 +37,6 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, role })
       </div>
 
       <div className="assistant-card-body">
-        <button
-          className={`copy-btn ${copied ? 'copied' : ''}`}
-          onClick={handleCopy}
-          aria-label="Copy message"
-          title={copied ? 'Copied!' : 'Copy to clipboard'}
-        >
-          {copied ? '✓' : '📋'}
-        </button>
-
         {hasCartLink && (
           <div className="cart-redirect-card">
             <div className="cart-card-header">
@@ -101,6 +92,15 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, role })
             {content}
           </ReactMarkdown>
         </div>
+
+        <button
+          className={`copy-btn ${copied ? 'copied' : ''}`}
+          onClick={handleCopy}
+          aria-label="Copy message"
+          title={copied ? 'Copied!' : 'Copy to clipboard'}
+        >
+          {copied ? '✓ Copied' : '📋 Copy'}
+        </button>
       </div>
     </div>
   )
