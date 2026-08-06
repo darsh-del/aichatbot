@@ -13,6 +13,45 @@ const uuid = (): string =>
   crypto.randomUUID?.() ??
   (Math.random().toString(36) + Math.random().toString(36)).replace(/0\./g, '').slice(0, 16)
 
+// Feature 01 — Dynamic welcome messages (rotated randomly for freshness)
+const WELCOME_MESSAGES = [
+  "Hey! I'm Bucky, your adventure concierge 🪂 Ask me about bungee jumping, river rafting, paragliding, prices, safety, group discounts — or just tell me what kind of thrill you're after!",
+  "Hey there! I'm Bucky 🪂 Ready to plan something epic? I can help with bungee, rafting, paragliding — or surprise me with what's on your bucket list!",
+  "Hi! Bucky here — your go-to for adventure in Rishikesh and beyond 🏔️ Whether it's prices, safety info, or booking a 117m bungee jump, I've got you covered!",
+  "Welcome! I'm Bucky, and I live for this stuff 🪂 Bungee off a cliff? Raft the Ganges? Paraglide over the mountains? Tell me what excites you and let's make it happen!",
+  "Hey! I'm Bucky — think of me as your adventure-planning buddy 🙌 Ask me anything about activities, prices, group discounts, or what to expect on your first jump!",
+]
+
+const pickWelcome = () => WELCOME_MESSAGES[Math.floor(Math.random() * WELCOME_MESSAGES.length)]
+
+// Marker to identify any welcome message when filtering API payloads
+const isWelcomeMsg = (content: string) => WELCOME_MESSAGES.includes(content)
+
+interface DisplayMessage extends ChatMessage {
+  id: number
+}
+
+let nextId = 0
+
+// Feature 02 — Persist chat on refresh
+const STORAGE_KEY = 'bucketlistt_chat'
+const SESSION_KEY = 'bucketlistt_session'
+
+function loadMessages(): DisplayMessage[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function loadSession(): string {
+  return localStorage.getItem(SESSION_KEY) || uuid()
+}
+
+// Fix nextId counter from persisted messages
+const _saved = loadMessages()
+if (_saved.length) nextId = Math.max(..._saved.map(m => m.id)) + 1
+
 const LOADING_PHRASES = [
   'Scouting the best adventure spots...',
   'Checking the wind conditions...',
@@ -36,14 +75,11 @@ const LOADING_PHRASES = [
   'Summoning the adventure spirit...',
 ]
 
-interface DisplayMessage extends ChatMessage {
-  id: number
-}
-
-let nextId = 0
-
 function App() {
-  const [messages, setMessages] = useState<DisplayMessage[]>([])
+  const [messages, setMessages] = useState<DisplayMessage[]>(() => {
+    const saved = loadMessages()
+    return saved.length ? saved : [{ id: nextId++, role: 'assistant', content: pickWelcome() }]
+  })
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,7 +91,15 @@ function App() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   // One id per conversation, so the backend can reuse the login token across
   // turns (and not re-prompt for the OTP). Reset on New Conversation.
-  const sessionIdRef = useRef<string>(uuid())
+  const sessionIdRef = useRef<string>(loadSession())
+
+  // Feature 02 — sync messages & session to localStorage
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages))
+  }, [messages])
+  useEffect(() => {
+    localStorage.setItem(SESSION_KEY, sessionIdRef.current)
+  }, [])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' })
@@ -89,11 +133,16 @@ function App() {
     const controller = new AbortController()
     abortRef.current = controller
 
+    // Feature 01 — filter welcome message from API payload (it's UI-only)
+    const apiMessages = history
+      .filter(m => !(m.role === 'assistant' && isWelcomeMsg(m.content)))
+      .map(({ role, content }) => ({ role, content }))
+
     let fullContent = ''
     try {
       await streamChat(
         {
-          messages: history.map(({ role, content }) => ({ role, content })),
+          messages: apiMessages,
           session_id: sessionIdRef.current,
         },
         (delta) => {
@@ -138,9 +187,11 @@ function App() {
       abortRef.current = null
       setIsStreaming(false)
     }
-    setMessages([])
+    setMessages([{ id: nextId++, role: 'assistant', content: pickWelcome() }])
     setError(null)
+    localStorage.removeItem(STORAGE_KEY)
     sessionIdRef.current = uuid()  // fresh session = fresh login
+    localStorage.setItem(SESSION_KEY, sessionIdRef.current)
   }
 
   const handleStop = () => {
@@ -165,7 +216,7 @@ function App() {
           {messages.length === 0 && (
             <div className="minimal-welcome-card">
               <div className="welcome-avatar">🪂</div>
-              <h2>Hey, I'm Josh 🪂 Where's your bucket list taking you?</h2>
+              <h2>Hey, I'm Bucky 🪂 Where's your bucket list taking you?</h2>
               <p>
                 Ask about <strong>Bungee Jumping (117m)</strong>, <strong>Rafting (9-35km)</strong>, <strong>Paragliding</strong>, prices, safety rules, or group discounts!
               </p>
@@ -231,7 +282,7 @@ function App() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask Josh anything about your next adventure... (Shift+Enter for new line)"
+            placeholder="Ask Bucky anything about your next adventure... (Shift+Enter for new line)"
             disabled={isStreaming}
             aria-label="Message"
           />

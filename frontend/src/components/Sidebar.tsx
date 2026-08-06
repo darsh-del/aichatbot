@@ -22,7 +22,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onSelectPrompt, onNewChat }) =
         </div>
         <div className="brand-text">
           <span className="brand-title">bucketlistt</span>
-          <span className="brand-sub">Josh · Adventure Concierge</span>
+          <span className="brand-sub">Bucky · Adventure Concierge</span>
         </div>
       </div>
 

@@ -8,7 +8,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCallbackModal }) => {
   return (
     <header className="chat-topbar">
       <div className="topbar-info">
-        <h2 className="chat-title">Chat with Josh 🪂</h2>
+        <h2 className="chat-title">Chat with Bucky 🪂</h2>
       </div>
 
       <div className="topbar-actions">

@@ -452,6 +452,27 @@ body {
   padding: 22px;
   box-shadow: var(--shadow-lux-md);
   flex: 1;
+  position: relative;
+}
+
+/* Feature 03 — Copy button */
+.copy-btn {
+  position: absolute;
+  top: 10px; right: 10px;
+  background: var(--bg-ivory-warm);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.assistant-card:hover .copy-btn { opacity: 1; }
+.copy-btn.copied {
+  background: #ECFDF5;
+  border-color: #10B981;
+  opacity: 1;
 }
 
 .formatted-text-wrapper {

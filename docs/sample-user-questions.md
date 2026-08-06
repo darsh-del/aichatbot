@@ -1,6 +1,6 @@
 # 100 Sample User Questions
 
-Realistic questions customers ask Josh (bucketlistt's adventure concierge), grounded in the
+Realistic questions customers ask Bucky (bucketlistt's adventure concierge), grounded in the
 real activities/providers in the live catalog. Useful for testing, prompt tuning, and building
 quick-reply suggestions. Phrasing is intentionally casual — the way real customers type.
 

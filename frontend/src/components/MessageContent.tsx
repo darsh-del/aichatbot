@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -11,6 +11,14 @@ const CART_URL = 'https://www.bucketlistt.com/experiences/cart'
 const CART_URL_RE = /https?:\/\/(?:www\.)?bucketlistt\.com\/cart\b(?![\w/])/g
 
 export const MessageContent: React.FC<MessageContentProps> = ({ content, role }) => {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   if (role === 'user') {
     return <div className="user-bubble-text">{content}</div>
   }
@@ -29,6 +37,15 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, role })
       </div>
 
       <div className="assistant-card-body">
+        <button
+          className={`copy-btn ${copied ? 'copied' : ''}`}
+          onClick={handleCopy}
+          aria-label="Copy message"
+          title={copied ? 'Copied!' : 'Copy to clipboard'}
+        >
+          {copied ? '✓' : '📋'}
+        </button>
+
         {hasCartLink && (
           <div className="cart-redirect-card">
             <div className="cart-card-header">

@@ -214,6 +214,13 @@ def _postprocess(fn: str, text: str) -> dict:
                 "Show ONLY the slot start time (e.g. '10:00 AM'). Do NOT show or "
                 "fabricate an end time — the data does not have meaningful end times."
             )
+    if fn == "add_to_cart":
+        result["_hint"] = (
+            "Item added. If you haven't suggested an add-on or combo yet in "
+            "this conversation, consider calling get_activity_addons for the "
+            "activity to check if there's a relevant add-on to mention (ONE "
+            "only, and only if you haven't upsold already)."
+        )
     # Dronecraft perks — injected directly into the tool result so the LLM
     # can't miss them. The catalog's inclusion field is trimmed and unreliable;
     # the LLM was hallucinating "lounge access" and dropping the real perks.
