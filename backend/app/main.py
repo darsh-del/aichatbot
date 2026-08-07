@@ -11,7 +11,8 @@ from fastapi.responses import StreamingResponse
 from app.config import settings
 from app.llm import stream_chat_response
 from app.rate_limit import RateLimitMiddleware
-from app.schemas import ChatRequest
+from app.schemas import ChatRequest, UserInfoRequest
+from app.session_store import init_redis, close_redis, save_user_info
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,7 +30,9 @@ async def lifespan(app: FastAPI):
         bool(settings.mcp_server_url),
         bool(settings.weaviate_url),
     )
+    await init_redis()
     yield
+    await close_redis()
     logger.info("Shutting down")
 
 
@@ -63,3 +66,18 @@ async def chat(request: ChatRequest) -> StreamingResponse:
         stream_chat_response(request.messages, request.session_id),
         media_type="text/event-stream",
     )
+
+@app.post("/api/session/user-info")
+async def store_user_info(request: UserInfoRequest) -> dict:
+    """Store captured user contact information in their Redis session."""
+    if not request.session_id:
+        return {"status": "error", "message": "No session ID provided"}
+        
+    logger.info("POST /api/session/user-info — session=%s", request.session_id)
+    await save_user_info(
+        request.session_id, 
+        request.user_info.name, 
+        request.user_info.phone, 
+        request.user_info.email
+    )
+    return {"status": "ok"}

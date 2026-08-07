@@ -11,7 +11,9 @@ Key settings:
     WEAVIATE_URL           — Weaviate URL, self-hosted or Cloud (optional, enables RAG)
     WEAVIATE_API_KEY       — Weaviate Cloud admin API key (leave blank for self-hosted)
     MCP_SERVER_URL         — bucketlistt MCP server URL (optional, enables live catalog tools)
-    REDIS_URL              — Redis URL (optional, caches read-only MCP catalog results)
+    REDIS_URL              — Redis URL (optional, MCP result cache + chat session store)
+    SESSION_TTL_SECONDS    — chat session TTL in Redis, default 7200 (2h)
+    LOGIN_PROMPT_AFTER     — user messages before showing the login-details prompt, default 3
 """
 import os
 
@@ -37,8 +39,12 @@ class Settings(BaseSettings):
     weaviate_api_key: str = ""
     # bucketlistt MCP server — read-only catalog tools only, see app/mcp_client.py
     mcp_server_url: str = ""
-    # Redis cache for read-only MCP catalog results — optional, see app/cache.py
-    redis_url: str = ""
+    # Redis — MCP result cache (app/cache.py) and chat session store /
+    # login-prompt trigger (app/session_store.py). Optional; both features
+    # no-op if unset or unreachable.
+    redis_url: str = "redis://localhost:6379/0"
+    session_ttl_seconds: int = 7200          # 2 hours
+    login_prompt_after: int = 3              # prompt after 3 user messages
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
