@@ -26,9 +26,28 @@ try:
 except ImportError:
     from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 
+from app import cache as mcp_cache
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Tools safe to cache in Redis (see app/cache.py), shared across every user.
+# Deliberately excludes:
+#   - get_time_slots / get_activity_slots: live availability, changes as
+#     other users book — a 2h-stale "yes" could send someone to book a slot
+#     that's already gone.
+#   - send_otp / verify_otp / add_to_cart / get_cart / update_cart_item /
+#     remove_from_cart / get_my_bookings: auth or per-user cart/booking
+#     state — caching these would leak one user's data to another.
+CACHEABLE_TOOLS = {
+    "get_destinations",
+    "get_experiences",
+    "get_experience",
+    "get_activities",
+    "get_activity",
+    "search_activities_by_destination_and_tag",
+    "get_activity_addons",
+}
 
 ALLOWED_TOOLS = {
     # Browse (read-only, no auth)
@@ -249,6 +268,15 @@ async def call_catalog_tool(tool_call) -> dict:
     streaming response).
     """
     fn = tool_call.function.name
+
+    cache_k = None
+    if fn in CACHEABLE_TOOLS:
+        cache_k = mcp_cache.cache_key(fn, tool_call.function.arguments or "{}")
+        cached = await mcp_cache.get(cache_k)
+        if cached is not None:
+            logger.info("MCP cache hit %s", fn)
+            return json.loads(cached)
+
     t0 = time.perf_counter()
     stack, session = await _fresh_session()
     try:
@@ -261,4 +289,9 @@ async def call_catalog_tool(tool_call) -> dict:
     logger.info("MCP call %s completed in %.3fs", fn, time.perf_counter() - t0)
     text = "\n".join(part.text for part in result.content if hasattr(part, "text"))
     text = text or str(result)
-    return _postprocess(fn, text)
+    postprocessed = _postprocess(fn, text)
+
+    if cache_k:
+        await mcp_cache.set(cache_k, json.dumps(postprocessed, separators=(",", ":")))
+
+    return postprocessed

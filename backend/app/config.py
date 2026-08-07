@@ -11,6 +11,7 @@ Key settings:
     WEAVIATE_URL           — Weaviate URL, self-hosted or Cloud (optional, enables RAG)
     WEAVIATE_API_KEY       — Weaviate Cloud admin API key (leave blank for self-hosted)
     MCP_SERVER_URL         — bucketlistt MCP server URL (optional, enables live catalog tools)
+    REDIS_URL              — Redis URL (optional, caches read-only MCP catalog results)
 """
 import os
 
@@ -36,6 +37,8 @@ class Settings(BaseSettings):
     weaviate_api_key: str = ""
     # bucketlistt MCP server — read-only catalog tools only, see app/mcp_client.py
     mcp_server_url: str = ""
+    # Redis cache for read-only MCP catalog results — optional, see app/cache.py
+    redis_url: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

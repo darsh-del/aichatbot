@@ -19,15 +19,23 @@ services:
       - "50051:50051"
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   backend:
     build: ./backend
     env_file: ./backend/.env
     environment:
       WEAVIATE_URL: http://weaviate:8080
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
     depends_on:
       - weaviate
+      - redis
     restart: unless-stopped
 
   frontend:
