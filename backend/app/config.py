@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     weaviate_api_key: str = ""
     # bucketlistt MCP server — read-only catalog tools only, see app/mcp_client.py
     mcp_server_url: str = ""
+    # Redis session store settings
+    redis_url: str = "redis://localhost:6379/0"
+    session_ttl_seconds: int = 7200          # 2 hours
+    login_prompt_after: int = 3              # prompt after 3 user messages
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

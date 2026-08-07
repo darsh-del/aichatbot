@@ -21,6 +21,7 @@ export interface ChatStreamFrame {
   done: boolean
   error?: string
   status?: string
+  prompt_login?: boolean
 }
 
 export interface HealthResponse {
@@ -51,9 +52,9 @@ export async function getHealth(
 export async function streamChat(
   request: ChatRequest,
   onDelta: (delta: string) => void,
-  options: { baseUrl?: string; signal?: AbortSignal; onStatus?: (status: string) => void } = {},
+  options: { baseUrl?: string; signal?: AbortSignal; onStatus?: (status: string) => void; onPromptLogin?: () => void } = {},
 ): Promise<void> {
-  const { baseUrl = API_BASE_URL, signal, onStatus } = options
+  const { baseUrl = API_BASE_URL, signal, onStatus, onPromptLogin } = options
 
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
@@ -83,6 +84,7 @@ export async function streamChat(
     const payload = JSON.parse(dataLines.join('')) as ChatStreamFrame
     if (payload.status && onStatus) onStatus(payload.status)
     if (payload.delta) onDelta(payload.delta)
+    if (payload.prompt_login && onPromptLogin) onPromptLogin()
     if (payload.done) {
       if (payload.error) throw new Error(payload.error)
       return true
@@ -108,5 +110,29 @@ export async function streamChat(
     }
   } finally {
     reader.releaseLock()
+  }
+}
+
+export interface UserInfo {
+  name: string
+  phone: string
+  email: string
+}
+
+/**
+ * POST /api/session/user-info
+ */
+export async function submitUserInfo(
+  sessionId: string,
+  userInfo: UserInfo,
+  baseUrl: string = API_BASE_URL,
+): Promise<void> {
+  const res = await fetch(`${baseUrl}/api/session/user-info`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, user_info: userInfo }),
+  })
+  if (!res.ok) {
+    throw new Error(`Failed to submit user info: ${res.status} ${res.statusText}`)
   }
 }

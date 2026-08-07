@@ -18,9 +18,21 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Request body for POST /api/chat."""
+    messages: list[ChatMessage] = Field(
+        min_length=1,
+        max_length=40,
+        description="Full conversation history. The client resends full history each turn, so capping this bounds the worst-case request size."
+    )
+    session_id: str | None = Field(
+        default=None,
+        description="Optional client-generated session UUID, used to persist auth tokens across requests."
+    )
 
-    # 40 messages ≈ 20 turns; anything longer is either a bug or abuse. The client
-    # resends full history each turn, so capping this bounds the worst-case request size.
-    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
-    session_id: Optional[str] = None
+class UserInfo(BaseModel):
+    name: str = ""
+    phone: str = ""
+    email: str = ""
+
+class UserInfoRequest(BaseModel):
+    session_id: str
+    user_info: UserInfo

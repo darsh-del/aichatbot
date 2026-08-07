@@ -31,6 +31,7 @@ from app.retriever import retrieve
 from app.schemas import ChatMessage
 from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
 from app.tools import TOOL_SCHEMAS, dispatch_tool
+from app.session_store import save_turn, should_prompt_login, mark_login_prompted
 
 class _DotDict(dict):
     """Dict that also supports attribute access — litellm expects both."""
@@ -403,14 +404,25 @@ async def stream_chat_response(
         logger.info("build_messages took %.3fs (%d messages total)", time.perf_counter() - t0, len(messages))
 
         token_count = 0
+        assistant_content = []
         async for event in _run_tool_loop(messages, session_id):
             if isinstance(event, tuple):
                 _, delta = event
                 if delta:
                     token_count += 1
+                    assistant_content.append(delta)
                     yield _sse({"delta": delta, "done": False})
             else:
                 yield _sse({"status": event, "done": False})
+
+        # Save the turn to Redis session
+        user_msg = next((m.content for m in reversed(chat_messages) if m.role == "user"), "")
+        full_assistant_msg = "".join(assistant_content)
+        if session_id:
+            await save_turn(session_id, user_msg, full_assistant_msg)
+            if await should_prompt_login(session_id):
+                yield _sse({"prompt_login": True, "done": False})
+                await mark_login_prompted(session_id)
 
         yield _sse({"delta": "", "done": True})
         logger.info("Request complete — %d delta chunks, total %.3fs", token_count, time.perf_counter() - t_request)

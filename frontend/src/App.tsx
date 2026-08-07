@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import { streamChat } from './api/chat'
-import type { ChatMessage } from './api/chat'
+import { streamChat, submitUserInfo } from './api/chat'
+import type { ChatMessage, UserInfo } from './api/chat'
 import { Header } from './components/Header'
 import { Sidebar } from './components/Sidebar'
 import { QuickChips } from './components/QuickChips'
 import { LeadModal } from './components/LeadModal'
 import { MessageContent } from './components/MessageContent'
+import { LoginPromptBanner } from './components/LoginPromptBanner'
 import './App.css'
 
 const uuid = (): string =>
@@ -84,6 +85,7 @@ function App() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false)
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false)
   const [toolStatus, setToolStatus] = useState<string | null>(null)
   const [loadingPhrase, setLoadingPhrase] = useState(LOADING_PHRASES[0])
 
@@ -134,8 +136,10 @@ function App() {
     abortRef.current = controller
 
     // Feature 01 — filter welcome message from API payload (it's UI-only)
+    // Also filter out any empty messages (e.g. from failed previous turns) to avoid 422 errors
     const apiMessages = history
       .filter(m => !(m.role === 'assistant' && isWelcomeMsg(m.content)))
+      .filter(m => m.content && m.content.trim().length > 0)
       .map(({ role, content }) => ({ role, content }))
 
     let fullContent = ''
@@ -154,7 +158,11 @@ function App() {
             ),
           )
         },
-        { signal: controller.signal, onStatus: setToolStatus },
+        { 
+          signal: controller.signal, 
+          onStatus: setToolStatus,
+          onPromptLogin: () => setShowLoginPrompt(true) 
+        },
       )
       if (fullContent.includes('bucketlistt.com/experiences/cart')) {
         window.open('https://www.bucketlistt.com/experiences/cart', '_blank')
@@ -200,6 +208,19 @@ function App() {
       abortRef.current = null
       setIsStreaming(false)
     }
+  }
+
+  const handleLoginSubmit = async (userInfo: UserInfo) => {
+    setShowLoginPrompt(false)
+    try {
+      await submitUserInfo(sessionIdRef.current, userInfo)
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleLoginDismiss = () => {
+    setShowLoginPrompt(false)
   }
 
   return (
@@ -273,6 +294,12 @@ function App() {
 
           <div ref={messagesEndRef} />
         </div>
+
+        <LoginPromptBanner 
+          isVisible={showLoginPrompt} 
+          onSubmit={handleLoginSubmit} 
+          onDismiss={handleLoginDismiss} 
+        />
 
         <QuickChips onSelectPrompt={sendPromptMessage} disabled={isStreaming} />
 

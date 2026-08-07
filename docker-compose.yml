@@ -24,10 +24,12 @@ services:
     env_file: ./backend/.env
     environment:
       WEAVIATE_URL: http://weaviate:8080
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
     depends_on:
       - weaviate
+      - redis
     restart: unless-stopped
 
   frontend:
@@ -45,5 +47,14 @@ services:
       - backend
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
 volumes:
   weaviate_data:
+  redis_data:
