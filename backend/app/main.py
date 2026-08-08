@@ -1,15 +1,17 @@
 """FastAPI application entrypoint. Thin route handlers only - business
 logic lives in app.llm / app.tools.
 """
+import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from app.config import settings
+from app.dashboard import get_summary, idle_scan_loop, list_summaries
 from app.llm import stream_chat_response
 from app.rate_limit import RateLimitMiddleware
 from app.schemas import ChatRequest, UserInfoRequest
@@ -32,7 +34,9 @@ async def lifespan(app: FastAPI):
         bool(settings.weaviate_url),
     )
     await init_redis()
+    scan_task = asyncio.create_task(idle_scan_loop())
     yield
+    scan_task.cancel()
     await close_redis()
     logger.info("Shutting down")
 
@@ -97,9 +101,37 @@ async def store_user_info(request: UserInfoRequest) -> dict:
         
     logger.info("POST /api/session/user-info — session=%s", request.session_id)
     await save_user_info(
-        request.session_id, 
-        request.user_info.name, 
-        request.user_info.phone, 
+        request.session_id,
+        request.user_info.name,
+        request.user_info.phone,
         request.user_info.email
     )
     return {"status": "ok"}
+
+
+def _check_dashboard_auth(http_request: Request) -> None:
+    """Bearer-token guard for /api/admin/*. 503 (not 401) when unconfigured —
+    tells you "this feature is off", not "your token is wrong"."""
+    if not settings.dashboard_api_key:
+        raise HTTPException(503, "Dashboard API not configured (set DASHBOARD_API_KEY)")
+    if http_request.headers.get("authorization") != f"Bearer {settings.dashboard_api_key}":
+        raise HTTPException(401, "Unauthorized")
+
+
+@app.get("/api/admin/session-summaries")
+def get_session_summaries(http_request: Request, since: str | None = None) -> dict:
+    """All session summaries, or those ended at/after `since` (ISO 8601).
+    Pull endpoint for the employee dashboard — see app/dashboard.py for
+    where a push-style webhook would hook in once you have a receiver.
+    """
+    _check_dashboard_auth(http_request)
+    return {"summaries": list_summaries(since=since)}
+
+
+@app.get("/api/admin/session-summaries/{session_id}")
+def get_session_summary(session_id: str, http_request: Request) -> dict:
+    _check_dashboard_auth(http_request)
+    record = get_summary(session_id)
+    if record is None:
+        raise HTTPException(404, "No summary for this session (not yet idle-summarized, or unknown id)")
+    return record

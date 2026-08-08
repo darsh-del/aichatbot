@@ -14,6 +14,9 @@ Key settings:
     REDIS_URL              — Redis URL (optional, MCP result cache + chat session store)
     SESSION_TTL_SECONDS    — chat session TTL in Redis, default 7200 (2h)
     LOGIN_PROMPT_AFTER     — user messages before showing the login-details prompt, default 3
+    DASHBOARD_API_KEY      — bearer token guarding GET /api/admin/session-summaries (optional,
+                             endpoints return 503 if unset — see app/dashboard.py)
+    IDLE_SUMMARY_MINUTES   — inactivity before a session is summarized for the dashboard, default 15
 """
 import os
 
@@ -45,6 +48,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     session_ttl_seconds: int = 7200          # 2 hours
     login_prompt_after: int = 3              # prompt after 3 user messages
+    # Employee-dashboard session summaries — see app/dashboard.py. Idle-scan
+    # runs regardless of REDIS_URL/DASHBOARD_API_KEY; it just no-ops without
+    # them (nothing to scan / no way to authenticate reads).
+    dashboard_api_key: str = ""              # blank = /api/admin/* returns 503
+    idle_summary_minutes: int = 15           # inactivity before summarizing a session
+    idle_scan_interval_seconds: int = 300    # how often to check for idle sessions
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

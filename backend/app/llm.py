@@ -266,7 +266,7 @@ async def _execute_tool(call, session_id: str | None) -> dict:
             if tool_name == "verify_otp":
                 set_token(session_id, extract_token(result.get("result", "")))
         else:
-            result = await dispatch_tool(tool_name, call.function.arguments)
+            result = await dispatch_tool(tool_name, call.function.arguments, session_id)
         elapsed = time.perf_counter() - t0
         logger.info("Tool %s completed in %.3fs", tool_name, elapsed)
         return result

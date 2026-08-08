@@ -20,6 +20,7 @@ from pathlib import Path
 
 import anthropic
 
+from app import session_store
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,8 @@ _AVAILABILITY_KEYWORDS = {"monsoon", "season", "closed", "open now", "rainy", "a
 _aclient: anthropic.AsyncAnthropic | None = None
 
 
-def _get_aclient() -> anthropic.AsyncAnthropic:
+def get_aclient() -> anthropic.AsyncAnthropic:
+    """Shared Anthropic client — also reused by app/dashboard.py for summaries."""
     global _aclient
     if _aclient is None:
         _aclient = anthropic.AsyncAnthropic()
@@ -114,7 +116,7 @@ async def search_web(query: str) -> dict:
     t0 = time.perf_counter()
     logger.info("search_web query: %s", query[:150])
     try:
-        response = await _get_aclient().messages.create(
+        response = await get_aclient().messages.create(
             model=settings.web_search_model,
             max_tokens=1024,
             tools=[{"type": "web_search_20260209", "name": "web_search"}],
@@ -221,7 +223,7 @@ _TOOL_REGISTRY = {
 }
 
 
-async def dispatch_tool(name: str, arguments: str) -> dict:
+async def dispatch_tool(name: str, arguments: str, session_id: str | None = None) -> dict:
     """Execute a tool call by name, given its JSON-encoded arguments string."""
     func = _TOOL_REGISTRY.get(name)
     if func is None:
@@ -234,4 +236,15 @@ async def dispatch_tool(name: str, arguments: str) -> dict:
     if inspect.isawaitable(result):
         result = await result
     logger.info("dispatch_tool: %s completed in %.3fs", name, time.perf_counter() - t0)
+
+    # Unify both contact-capture paths: whenever a lead is captured via chat
+    # (not just the old dedicated /api/session/user-info form), also save it
+    # into the Redis session so it shows up in the dashboard summary below.
+    if name == "escalate_and_capture_lead" and session_id and result.get("status") == "success":
+        details = result.get("lead_details", {})
+        if details.get("phone") or details.get("email"):
+            await session_store.save_user_info(
+                session_id, details.get("name", ""), details.get("phone", ""), details.get("email", "")
+            )
+
     return result

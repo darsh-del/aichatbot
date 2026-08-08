@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import Any
 
 from redis.asyncio import Redis, from_url
@@ -60,7 +61,8 @@ async def save_turn(session_id: str, user_msg: str, assistant_msg: str) -> None:
         # Build update dictionary
         update = {
             "messages": json.dumps(messages),
-            "message_count": str(count)
+            "message_count": str(count),
+            "last_activity": str(time.time()),
         }
         
         # Write to redis and set TTL
@@ -130,7 +132,7 @@ async def save_user_info(session_id: str, name: str, phone: str, email: str) -> 
     """Store the captured user info in the session."""
     if not redis_client or not session_id:
         return
-        
+
     try:
         key = f"session:{session_id}"
         user_info = json.dumps({"name": name, "phone": phone, "email": email})
@@ -138,3 +140,63 @@ async def save_user_info(session_id: str, name: str, phone: str, email: str) -> 
         await redis_client.expire(key, settings.session_ttl_seconds)
     except Exception as e:
         logger.error(f"Failed to save user info: {e}")
+
+
+async def find_idle_sessions(idle_seconds: int) -> list[str]:
+    """Session ids idle >= idle_seconds, with at least one turn, not yet
+    summarized. Used by the dashboard idle-scan loop (see app/dashboard.py)
+    to find conversations to summarize once the user's gone quiet.
+
+    ponytail: SCAN over every session:* key once per poll interval — fine at
+    this traffic level (a handful of concurrent sessions). If this ever runs
+    against thousands of live sessions, keep a Redis SET of active session
+    ids (added in save_turn, removed here) instead of scanning the keyspace.
+    """
+    if not redis_client:
+        return []
+    idle_ids = []
+    now = time.time()
+    try:
+        async for key in redis_client.scan_iter(match="session:*"):
+            data = await redis_client.hgetall(key)
+            if not data or data.get("summarized") == "true":
+                continue
+            if int(data.get("message_count", 0)) < 1:
+                continue
+            last_activity = float(data.get("last_activity", 0) or 0)
+            if last_activity and (now - last_activity) >= idle_seconds:
+                idle_ids.append(key.split("session:", 1)[1])
+    except Exception as e:
+        logger.error(f"Failed to scan for idle sessions: {e}")
+    return idle_ids
+
+
+async def get_session_data(session_id: str) -> dict[str, Any]:
+    """Raw session record for summarization: parsed messages/user_info,
+    plus message_count and last_activity. Empty dict if not found.
+    """
+    if not redis_client or not session_id:
+        return {}
+    try:
+        data = await redis_client.hgetall(f"session:{session_id}")
+        if not data:
+            return {}
+        return {
+            "messages": json.loads(data.get("messages", "[]")),
+            "user_info": json.loads(data["user_info"]) if data.get("user_info") else None,
+            "message_count": int(data.get("message_count", 0)),
+            "last_activity": float(data.get("last_activity", 0) or 0),
+        }
+    except Exception as e:
+        logger.error(f"Failed to load session data for {session_id}: {e}")
+        return {}
+
+
+async def mark_summarized(session_id: str) -> None:
+    """Mark a session as summarized so the idle scan doesn't reprocess it."""
+    if not redis_client or not session_id:
+        return
+    try:
+        await redis_client.hset(f"session:{session_id}", "summarized", "true")
+    except Exception as e:
+        logger.error(f"Failed to mark session {session_id} summarized: {e}")
