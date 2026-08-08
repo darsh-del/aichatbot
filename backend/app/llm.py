@@ -31,7 +31,7 @@ from app.retriever import retrieve
 from app.schemas import ChatMessage
 from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
 from app.tools import TOOL_SCHEMAS, dispatch_tool
-from app.session_store import save_turn, should_prompt_login, mark_login_prompted
+from app.session_store import save_turn, should_prompt_login, mark_login_prompted, should_nudge_for_contact
 
 class _DotDict(dict):
     """Dict that also supports attribute access — litellm expects both."""
@@ -53,7 +53,11 @@ def _load_base_prompt() -> str:
     return _base_prompt_cache
 
 
-def build_messages(chat_messages: list[ChatMessage], session_id: str | None = None) -> list[dict]:
+def build_messages(
+    chat_messages: list[ChatMessage],
+    session_id: str | None = None,
+    nudge_contact: bool = False,
+) -> list[dict]:
     """Prepend the server-controlled system prompt to the client conversation.
 
     When Weaviate is configured, the user's latest message is used to retrieve
@@ -181,6 +185,21 @@ def build_messages(chat_messages: list[ChatMessage], session_id: str | None = No
             "\n\n## Auth status\nThe user is ALREADY LOGGED IN in this session. Do NOT call send_otp or "
             "verify_otp again and do NOT ask for their phone/OTP — proceed directly with cart and booking "
             "actions. The login token is applied automatically."
+        )
+
+    # One-time nudge, checked by the caller BEFORE this turn's response is
+    # generated — no special frontend flag needed, the ask just rides inside
+    # the normal answer text.
+    if nudge_contact:
+        system_content += (
+            "\n\n## One-time nudge — ask for contact info\n"
+            "This is a good moment to warmly ask the user for their name and phone "
+            "number (email optional) so you can save this itinerary/answer and flag "
+            "them for VIP slots & discounts. Add ONE friendly sentence for this at "
+            "the end of your answer above — don't make it the whole response, and "
+            "don't repeat this ask again in later turns. If they share their name, "
+            "phone, or email in a future message, call `escalate_and_capture_lead` "
+            "with urgency='normal' to save it."
         )
 
     # Final guardrail — placed LAST so it benefits from recency bias.
@@ -400,7 +419,8 @@ async def stream_chat_response(
     t_request = time.perf_counter()
     try:
         t0 = time.perf_counter()
-        messages = await asyncio.to_thread(build_messages, chat_messages, session_id)
+        nudge_contact = bool(session_id) and await should_nudge_for_contact(session_id)
+        messages = await asyncio.to_thread(build_messages, chat_messages, session_id, nudge_contact)
         logger.info("build_messages took %.3fs (%d messages total)", time.perf_counter() - t0, len(messages))
 
         token_count = 0

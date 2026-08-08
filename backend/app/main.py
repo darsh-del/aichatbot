@@ -2,9 +2,10 @@
 logic lives in app.llm / app.tools.
 """
 import logging
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -55,17 +56,38 @@ def health() -> dict:
 
 
 @app.post("/api/chat")
-async def chat(request: ChatRequest) -> StreamingResponse:
-    """Stream a chat completion as Server-Sent Events."""
+async def chat(request: ChatRequest, http_request: Request) -> StreamingResponse:
+    """Stream a chat completion as Server-Sent Events.
+
+    session_id resolution: an explicit value in the request body wins (a
+    frontend that manages its own), else an existing session_id cookie,
+    else a freshly generated one — set as a cookie on the response so a
+    frontend that does nothing special still gets a stable session across
+    requests, with no client-side UUID generation required.
+    """
+    session_id = request.session_id or http_request.cookies.get("session_id") or str(uuid.uuid4())
     logger.info(
         "POST /api/chat — %d messages, session=%s",
         len(request.messages),
-        request.session_id or "none",
+        session_id,
     )
-    return StreamingResponse(
-        stream_chat_response(request.messages, request.session_id),
+    response = StreamingResponse(
+        stream_chat_response(request.messages, session_id),
         media_type="text/event-stream",
     )
+    # ponytail: secure mirrors the scheme uvicorn itself sees — if this ever
+    # sits behind a TLS-terminating proxy (e.g. Caddy) run uvicorn with
+    # --proxy-headers, or the cookie's Secure flag silently stays off even
+    # though users are on https.
+    response.set_cookie(
+        "session_id",
+        session_id,
+        max_age=settings.session_ttl_seconds,
+        httponly=True,
+        samesite="lax",
+        secure=http_request.url.scheme == "https",
+    )
+    return response
 
 @app.post("/api/session/user-info")
 async def store_user_info(request: UserInfoRequest) -> dict:

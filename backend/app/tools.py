@@ -165,8 +165,11 @@ TOOL_SCHEMAS = [
             "name": "escalate_and_capture_lead",
             "description": (
                 "Capture high-value group booking leads (5+ people), bulk discount inquiries, "
-                "custom itinerary requests, or explicit customer requests to talk to a human agent. "
-                "Generates an escalation ticket."
+                "custom itinerary requests, explicit customer requests to talk to a human agent, "
+                "OR simply whenever the user volunteers their name/phone/email in conversation "
+                "(e.g. after being asked to save their itinerary) — call it then too, with "
+                "urgency='normal', even with no group booking involved. Generates an escalation "
+                "ticket / contact record."
             ),
             "parameters": {
                 "type": "object",

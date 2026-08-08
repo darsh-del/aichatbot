@@ -80,28 +80,39 @@ async def get_message_count(session_id: str) -> int:
     except Exception:
         return 0
 
-async def should_prompt_login(session_id: str) -> bool:
-    """Check if we should prompt the user for login/details.
-    True if message count >= configured threshold AND not yet prompted AND no user info.
-    """
+async def _prompt_eligible(session_id: str, min_count: int) -> bool:
+    """Shared guard: min_count turns already saved, not yet prompted, no user_info."""
     if not redis_client or not session_id:
         return False
-        
     try:
-        key = f"session:{session_id}"
-        session_data = await redis_client.hgetall(key)
-        
+        session_data = await redis_client.hgetall(f"session:{session_id}")
         if not session_data:
             return False
-            
         count = int(session_data.get("message_count", 0))
         prompted = session_data.get("login_prompted", "false") == "true"
         has_info = "user_info" in session_data
-        
-        return (count >= settings.login_prompt_after) and not prompted and not has_info
+        return count >= min_count and not prompted and not has_info
     except Exception as e:
-        logger.error(f"Failed to check login prompt status: {e}")
+        logger.error(f"Failed to check prompt eligibility for session {session_id}: {e}")
         return False
+
+
+async def should_prompt_login(session_id: str) -> bool:
+    """True once LOGIN_PROMPT_AFTER messages are already saved. Drives the
+    legacy `prompt_login` SSE flag for frontends with dedicated UI for it.
+    """
+    return await _prompt_eligible(session_id, settings.login_prompt_after)
+
+
+async def should_nudge_for_contact(session_id: str) -> bool:
+    """True one turn earlier than should_prompt_login — checked BEFORE the
+    Nth response is generated, so the assistant's own reply can ask for
+    contact info as ordinary chat text. This is what makes the feature work
+    with any frontend: no special UI or flag-handling required, since the
+    ask (and, via escalate_and_capture_lead, the capture) both ride inside
+    the normal chat stream.
+    """
+    return await _prompt_eligible(session_id, settings.login_prompt_after - 1)
 
 async def mark_login_prompted(session_id: str) -> None:
     """Mark that the login prompt has been shown so it doesn't re-trigger."""
