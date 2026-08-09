@@ -125,12 +125,14 @@ def get_session_summaries(http_request: Request, since: str | None = None) -> di
     where a push-style webhook would hook in once you have a receiver.
     """
     _check_dashboard_auth(http_request)
+    logger.info("GET /api/admin/session-summaries — since=%s", since)
     return {"summaries": list_summaries(since=since)}
 
 
 @app.get("/api/admin/session-summaries/{session_id}")
 def get_session_summary(session_id: str, http_request: Request) -> dict:
     _check_dashboard_auth(http_request)
+    logger.info("GET /api/admin/session-summaries/%s", session_id)
     record = get_summary(session_id)
     if record is None:
         raise HTTPException(404, "No summary for this session (not yet idle-summarized, or unknown id)")
