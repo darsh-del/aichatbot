@@ -220,7 +220,12 @@ def _postprocess(fn: str, text: str) -> dict:
     except (ValueError, TypeError):
         pass
     slimmed_len = len(text)
-    truncated = slimmed_len > MAX_TOOL_RESULT_CHARS
+    # BUNGEE_SUMMARY_TOOL is exempt: it's the tool that exists specifically so
+    # bungee queries DON'T get cut off mid-JSON like the old large-dump tool
+    # did. Its own compact shape + gating to bungee-only queries keeps it
+    # bounded (~25-30k chars for a full multi-provider Rishikesh bungee
+    # listing, measured against the live server) — well within context budget.
+    truncated = fn != BUNGEE_SUMMARY_TOOL and slimmed_len > MAX_TOOL_RESULT_CHARS
     if truncated:
         text = text[:MAX_TOOL_RESULT_CHARS] + "\n...[truncated; use a more specific query or `select`]"
     logger.info("MCP result %s: %d raw, %d slimmed%s", fn, raw_len, slimmed_len, f", TRUNCATED at {MAX_TOOL_RESULT_CHARS}" if truncated else "")
