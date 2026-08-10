@@ -15,6 +15,7 @@ StreamingResponse.
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import date
 from pathlib import Path
@@ -26,7 +27,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 from app.mcp_client import ALLOWED_TOOLS as MCP_ALLOWED_TOOLS
-from app.mcp_client import call_catalog_tool, load_catalog_tools
+from app.mcp_client import BUNGEE_SUMMARY_TOOL, call_catalog_tool, load_catalog_tools
 from app.retriever import retrieve
 from app.schemas import ChatMessage
 from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
@@ -41,6 +42,25 @@ class _DotDict(dict):
 
 MAX_TOOL_ITERATIONS = 8
 MAX_OUTPUT_TOKENS = 1500
+
+# Matches bungee/bungy/bungie, case-insensitive — the only trigger for
+# exposing BUNGEE_SUMMARY_TOOL to the LLM (see _wants_bungee_summary).
+_BUNGEE_RE = re.compile(r"bung(?:ee|y|ie)?", re.IGNORECASE)
+
+
+def _wants_bungee_summary(messages: list[dict]) -> bool:
+    """True only if the latest user message is about bungee jumping.
+
+    Deterministic gate, not left to the LLM's judgment: BUNGEE_SUMMARY_TOOL
+    is a compact, bungee-only shape (no location/media) — offering it for
+    every topic would just reproduce the old over-fetch problem elsewhere.
+    """
+    latest_user = next(
+        (m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"),
+        "",
+    )
+    return bool(_BUNGEE_RE.search(latest_user))
+
 
 # -- Cached base prompt (file doesn't change at runtime) ---------------------
 _base_prompt_cache: str | None = None
@@ -120,6 +140,8 @@ def build_messages(
             "'16KM Rafting') → `time slots` = bookable times for one activity on one date.\n\n"
             "**Tools by level:** `get_destinations` (cities) · `get_experiences`/`get_experience` "
             "(providers in a city) · `get_activities`/`get_activity` (activities) · "
+            "`get_activities_summary` (compact bungee-only list — see the bungee recipe below; "
+            "only offered to you when the user's message is about bungee) · "
             "`search_activities_by_destination_and_tag` (find activities by keyword across all "
             "providers) · `get_time_slots` (timings for ONE activityId on ONE date — use THIS for "
             "timings; it needs no login) · `get_activity_addons`. Do NOT pass a `select` argument — it "
@@ -142,9 +164,13 @@ def build_messages(
             "actualPrice (MRP) and discountedPrice (selling).\n"
             "- *'which cities':* `get_destinations`.\n"
             "- *'bungee in Rishikesh' / 'bungee prices' / 'bungee options':* use "
-            "`search_activities_by_destination_and_tag(destination='Rishikesh', tagSearch='bungee')` "
-            "and present ALL providers (Himalayan Bungee, Splash Bungy, Jumpin Heights, Maa Ganga "
-            "Bungee, Thrill Factory) with prices. Never show only one provider.\n"
+            "`get_activities_summary(destination='Rishikesh', tagSearch='bungee')` — a compact "
+            "tool made specifically for bungee (avoids the large data dump `search_activities_by_"
+            "destination_and_tag` used to send) — and present ALL providers (Himalayan Bungee, "
+            "Splash Bungy, Jumpin Heights, Maa Ganga Bungee, Thrill Factory) with prices. Never show "
+            "only one provider. If the user then asks for MORE detail than the summary has (full "
+            "description, exact location, media, certifications), call `get_activity(identifier=...)` "
+            "on that one activity's `_id` for the complete record — do not guess missing fields.\n"
             "- *'paragliding':* search with tagSearch='paragliding' across destinations. Paragliding "
             "typically has SHORT and LONG flight options — always present both with prices and let the "
             "user choose.\n"
@@ -287,6 +313,12 @@ async def _run_tool_loop(
     """
     t_loop_start = time.perf_counter()
     mcp_tools = await load_catalog_tools()
+    bungee_query = _wants_bungee_summary(messages)
+    if not bungee_query:
+        mcp_tools = [t for t in mcp_tools if t["function"]["name"] != BUNGEE_SUMMARY_TOOL]
+    logger.info(
+        "[bungee-summary] tool %s this turn", "enabled" if bungee_query else "disabled (non-bungee query)"
+    )
     logger.info("Loaded %d MCP tools, %d local tools", len(mcp_tools), len(TOOL_SCHEMAS))
     all_tools = TOOL_SCHEMAS + mcp_tools
     first_iter_tools = [
