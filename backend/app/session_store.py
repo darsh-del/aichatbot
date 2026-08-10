@@ -68,6 +68,7 @@ async def save_turn(session_id: str, user_msg: str, assistant_msg: str) -> None:
         # Write to redis and set TTL
         await redis_client.hset(key, mapping=update)
         await redis_client.expire(key, settings.session_ttl_seconds)
+        logger.info(f"Saved turn for session {session_id} (count: {count})")
     except Exception as e:
         logger.error(f"Failed to save turn to Redis for session {session_id}: {e}")
 
@@ -138,6 +139,7 @@ async def save_user_info(session_id: str, name: str, phone: str, email: str) -> 
         user_info = json.dumps({"name": name, "phone": phone, "email": email})
         await redis_client.hset(key, "user_info", user_info)
         await redis_client.expire(key, settings.session_ttl_seconds)
+        logger.info(f"Saved user info for session {session_id}")
     except Exception as e:
         logger.error(f"Failed to save user info: {e}")
 
@@ -198,5 +200,6 @@ async def mark_summarized(session_id: str) -> None:
         return
     try:
         await redis_client.hset(f"session:{session_id}", "summarized", "true")
+        logger.info(f"Marked session {session_id} as summarized")
     except Exception as e:
         logger.error(f"Failed to mark session {session_id} summarized: {e}")

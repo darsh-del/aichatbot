@@ -1174,3 +1174,31 @@ body {
   }
 }
 
+/* Markdown Table Styles */
+.formatted-text-wrapper table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+  font-size: 13.5px;
+  background: #FFFFFF;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(28, 25, 23, 0.04);
+}
+
+.formatted-text-wrapper th,
+.formatted-text-wrapper td {
+  padding: 12px 16px;
+  border: 1px solid var(--border-light);
+  text-align: left;
+}
+
+.formatted-text-wrapper th {
+  background: var(--bg-ivory-warm);
+  font-weight: 700;
+  color: var(--text-heading);
+}
+
+.formatted-text-wrapper tr:nth-child(even) td {
+  background: #FAF8F5;
+}
