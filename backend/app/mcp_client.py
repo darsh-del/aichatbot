@@ -44,10 +44,15 @@ CACHEABLE_TOOLS = {
     "get_experiences",
     "get_experience",
     "get_activities",
+    "get_activities_summary",
     "get_activity",
     "search_activities_by_destination_and_tag",
     "get_activity_addons",
 }
+
+# Compact bungee-only discovery tool — gated in app/llm.py so it's only ever
+# offered to the LLM when the user's message is about bungee jumping.
+BUNGEE_SUMMARY_TOOL = "get_activities_summary"
 
 ALLOWED_TOOLS = {
     # Browse (read-only, no auth)
@@ -55,6 +60,10 @@ ALLOWED_TOOLS = {
     "get_experiences",
     "get_experience",
     "get_activities",
+    # Compact discovery shape (no media/location) — bungee jumping only, see
+    # BUNGEE_SUMMARY_TOOL gating in app/llm.py. Falls back to get_activities /
+    # get_activity when the user needs the fields this tool leaves out.
+    "get_activities_summary",
     "get_activity",
     "search_activities_by_destination_and_tag",
     "get_activity_slots",
@@ -211,7 +220,12 @@ def _postprocess(fn: str, text: str) -> dict:
     except (ValueError, TypeError):
         pass
     slimmed_len = len(text)
-    truncated = slimmed_len > MAX_TOOL_RESULT_CHARS
+    # BUNGEE_SUMMARY_TOOL is exempt: it's the tool that exists specifically so
+    # bungee queries DON'T get cut off mid-JSON like the old large-dump tool
+    # did. Its own compact shape + gating to bungee-only queries keeps it
+    # bounded (~25-30k chars for a full multi-provider Rishikesh bungee
+    # listing, measured against the live server) — well within context budget.
+    truncated = fn != BUNGEE_SUMMARY_TOOL and slimmed_len > MAX_TOOL_RESULT_CHARS
     if truncated:
         text = text[:MAX_TOOL_RESULT_CHARS] + "\n...[truncated; use a more specific query or `select`]"
     logger.info("MCP result %s: %d raw, %d slimmed%s", fn, raw_len, slimmed_len, f", TRUNCATED at {MAX_TOOL_RESULT_CHARS}" if truncated else "")
@@ -233,6 +247,13 @@ def _postprocess(fn: str, text: str) -> dict:
                 "Show ONLY the slot start time (e.g. '10:00 AM'). Do NOT show or "
                 "fabricate an end time — the data does not have meaningful end times."
             )
+    if fn == BUNGEE_SUMMARY_TOOL:
+        logger.info("[bungee-summary] %s returned %d chars (truncated=%s)", fn, slimmed_len, truncated)
+        result["_hint"] = (
+            "This is a compact bungee-only summary (no location/media/full description). "
+            "If the user asks for MORE detail than this has, call get_activity(identifier=...) "
+            "on the specific activity's _id for the full record."
+        )
     if fn == "add_to_cart":
         result["_hint"] = (
             "Item added. If you haven't suggested an add-on or combo yet in "
@@ -268,6 +289,8 @@ async def call_catalog_tool(tool_call) -> dict:
     streaming response).
     """
     fn = tool_call.function.name
+    if fn == BUNGEE_SUMMARY_TOOL:
+        logger.info("[bungee-summary] %s invoked args=%s", fn, tool_call.function.arguments)
 
     cache_k = None
     if fn in CACHEABLE_TOOLS:
