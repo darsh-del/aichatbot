@@ -65,7 +65,6 @@ jobs:
   # ─── Build + push images to GHCR (main only, after tests pass) ──────────
   build-and-push:
     needs: [backend-test, frontend-test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -84,7 +83,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./backend
-          push: true
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: |
             ${{ env.BACKEND_IMAGE }}:latest
             ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
@@ -95,7 +94,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./frontend
-          push: true
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           # VITE_API_BASE_URL is baked into the bundle at build time — set it as
           # a repo variable (Settings → Secrets and variables → Actions → Variables).
           build-args: |

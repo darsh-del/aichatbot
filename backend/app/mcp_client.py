@@ -141,6 +141,7 @@ _DROP_KEYS = {
     "createdAt", "updatedAt", "uniqueCode", "advancePercentage", "highlightedOrder",
     "order", "forAgent", "isHighlighted", "isApproved", "category",
     "timeSlots",
+    "bucketlisttSeasonalClosures",
 }
 _HTML_KEYS = {"description", "highlights", "inclusion", "exclusion", "subtitle", "eligibility"}
 _HTML_RE = re.compile(r"<[^>]+>")
@@ -152,10 +153,27 @@ _LONG_HTML_KEYS = {"description", "inclusion", "exclusion", "highlights"}
 _SEARCH_KEEP = {"_id", "title", "actualPrice", "discountedPrice", "subtitle"}
 
 
+
+import datetime
+
+def _active_closure(closures: list, on_date: str) -> dict | None:
+    """Return the closure record covering `on_date` (YYYY-MM-DD), if any."""
+    for c in closures or []:
+        if c.get("isActive") and c.get("startDate", "") <= on_date <= c.get("endDate", ""):
+            return c
+    return None
+
 def _slim(obj):
     """Recursively drop media/HTML bulk from an MCP JSON result."""
     if isinstance(obj, dict):
         out = {}
+        if "bucketlisttSeasonalClosures" in obj:
+            today = datetime.date.today().isoformat()
+            closure = _active_closure(obj["bucketlisttSeasonalClosures"], today)
+            if closure:
+                out["_closed_until"] = closure.get("endDate")
+                out["_closure_reason"] = closure.get("message")
+
         for k, v in obj.items():
             if k in _DROP_KEYS:
                 continue
@@ -208,7 +226,7 @@ def _compact_search(raw):
     return out
 
 
-def _postprocess(fn: str, text: str) -> dict:
+async def _postprocess(fn: str, text: str, tool_args: dict) -> dict:
     """Slim, truncate, and add hints to a tool result."""
     raw_len = len(text)
     try:
@@ -237,11 +255,50 @@ def _postprocess(fn: str, text: str) -> dict:
         )
     if fn in ("get_time_slots", "get_activity_slots"):
         if '"slots":[]' in text.replace(" ", ""):
-            result["_hint"] = (
-                "Zero slots for THIS activity. Other providers may offer the same "
-                "activity type with available slots — call search_activities_by_destination_and_tag "
-                "to find alternatives before telling the user it's unavailable."
-            )
+            activity_id = tool_args.get("activityId") or tool_args.get("identifier")
+            date_req = tool_args.get("date")
+            is_closed = False
+            closure_reason = ""
+            closed_until = ""
+            
+            if activity_id and date_req:
+                try:
+                    # Supplementary lookup to check for closure
+                    from litellm.experimental_mcp_client import call_openai_tool
+                    from pydantic import BaseModel
+                    class DummyFunc(BaseModel):
+                        name: str = "get_activity"
+                        arguments: str
+                    class DummyCall(BaseModel):
+                        function: DummyFunc
+
+                    dummy_call = DummyCall(function=DummyFunc(arguments=json.dumps({"identifier": activity_id})))
+                    # Use call_catalog_tool which handles caching implicitly!
+                    act_result = await call_catalog_tool(dummy_call)
+                    
+                    if "_closed_until" in act_result.get("result", ""):
+                        # Extract it simply, we know we just injected it in _slim!
+                        res_obj = json.loads(act_result["result"])
+                        if "_closed_until" in res_obj:
+                            is_closed = True
+                            closed_until = res_obj["_closed_until"]
+                            closure_reason = res_obj["_closure_reason"]
+                except Exception as e:
+                    logger.error(f"Supplementary closure lookup failed: {e}")
+
+            if is_closed:
+                result["_hint"] = (
+                    f"Zero slots for THIS activity because it is CLOSED for the season until {closed_until}. "
+                    f"Reason: {closure_reason}. "
+                    "Do NOT suggest same-category alternatives (like another rafting route) unless you "
+                    "already know for sure they are open, because the entire category is likely closed."
+                )
+            else:
+                result["_hint"] = (
+                    "Zero slots for THIS activity. Other providers may offer the same "
+                    "activity type with available slots — call search_activities_by_destination_and_tag "
+                    "to find alternatives before telling the user it's unavailable."
+                )
         else:
             result["_hint"] = (
                 "Show ONLY the slot start time (e.g. '10:00 AM'). Do NOT show or "
@@ -312,7 +369,7 @@ async def call_catalog_tool(tool_call) -> dict:
     logger.info("MCP call %s completed in %.3fs", fn, time.perf_counter() - t0)
     text = "\n".join(part.text for part in result.content if hasattr(part, "text"))
     text = text or str(result)
-    postprocessed = _postprocess(fn, text)
+    postprocessed = await _postprocess(fn, text, json.loads(tool_call.function.arguments or "{}"))
 
     if cache_k:
         await mcp_cache.set(cache_k, json.dumps(postprocessed, separators=(",", ":")))

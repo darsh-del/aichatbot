@@ -232,10 +232,11 @@ def build_messages(
     # The LLM tends to follow the last instruction most strongly.
     system_content += (
         "\n\n## MANDATORY — DO NOT SKIP\n"
-        "Before telling the user ANY activity is unavailable, closed, or affected by "
-        "monsoon/weather/season, you MUST call `get_time_slots` for the requested date first. "
-        "If the tool returns slots, present them — the tool is ALWAYS more authoritative than "
-        "any seasonal text above. NEVER refuse based on season without checking the tool."
+        "Seasonal closures are authoritative and explicitly returned by the tools as "
+        "`_closed_until` and `_closure_reason`. If a tool shows an activity is closed, trust it "
+        "and inform the user of the reason and reopen date. If an activity is closed, do NOT "
+        "suggest alternatives from the exact same category (e.g. another rafting route) without "
+        "first checking if they are open, as the entire category is likely closed."
     )
 
     system_message = {"role": "system", "content": system_content}
