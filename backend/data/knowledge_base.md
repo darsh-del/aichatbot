@@ -289,7 +289,7 @@ State these clearly when asked — do NOT hedge with "consult a doctor" alone wh
 
 ## Seasonal Notes (ALWAYS verify with `get_time_slots` before answering)
 - **Jumpin Heights (bungee, giant swing, flying fox):** Often closed mid-July to mid-September — but ALWAYS verify with `get_time_slots` first.
-- **River rafting:** Operators set their own schedules year-round. **ALWAYS call `get_time_slots`** — do NOT assume any season is closed.
+- **River rafting:** Seasonal closures are real, vary year to year, and are reflected in the live tool data via `_closed_until`. Always trust the tool data if it says an activity is closed for the season.
 - **Paragliding (Mussoorie / Bir Billing):** Best October–June — but check `get_time_slots` before saying unavailable.
 - **RULE: NEVER say "closed", "unavailable", or "affected by monsoon" without first calling `get_time_slots` for the specific activity and date.** The tool is the single source of truth for availability.
 
