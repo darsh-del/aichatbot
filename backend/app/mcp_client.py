@@ -31,6 +31,13 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+class _DotDict(dict):
+    """Dict that also supports attribute access — litellm expects both
+    (call_catalog_tool uses .function.name, its MCP transform uses ["function"])."""
+    __getattr__ = dict.__getitem__
+    __setattr__ = dict.__setitem__
+
 # Tools safe to cache in Redis (see app/cache.py), shared across every user.
 # Deliberately excludes:
 #   - get_time_slots / get_activity_slots: live availability, changes as
@@ -263,26 +270,26 @@ async def _postprocess(fn: str, text: str, tool_args: dict) -> dict:
             
             if activity_id and date_req:
                 try:
-                    # Supplementary lookup to check for closure
-                    from litellm.experimental_mcp_client import call_openai_tool
-                    from pydantic import BaseModel
-                    class DummyFunc(BaseModel):
-                        name: str = "get_activity"
-                        arguments: str
-                    class DummyCall(BaseModel):
-                        function: DummyFunc
-
-                    dummy_call = DummyCall(function=DummyFunc(arguments=json.dumps({"identifier": activity_id})))
+                    # Supplementary lookup to check for closure. Needs a fake
+                    # tool-call object: call_catalog_tool reads .function.name
+                    # (attribute access) while litellm's MCP transform reads
+                    # ["function"]/["name"] (subscript access) — _DotDict supports
+                    # both, unlike a plain pydantic BaseModel (see llm.py's use of
+                    # the same class for real streamed tool calls).
+                    dummy_call = _DotDict(
+                        function=_DotDict(
+                            name="get_activity",
+                            arguments=json.dumps({"identifier": activity_id}),
+                        )
+                    )
                     # Use call_catalog_tool which handles caching implicitly!
                     act_result = await call_catalog_tool(dummy_call)
-                    
-                    if "_closed_until" in act_result.get("result", ""):
-                        # Extract it simply, we know we just injected it in _slim!
-                        res_obj = json.loads(act_result["result"])
-                        if "_closed_until" in res_obj:
-                            is_closed = True
-                            closed_until = res_obj["_closed_until"]
-                            closure_reason = res_obj["_closure_reason"]
+
+                    res_obj = json.loads(act_result.get("result") or "{}")
+                    if "_closed_until" in res_obj:
+                        is_closed = True
+                        closed_until = res_obj["_closed_until"]
+                        closure_reason = res_obj["_closure_reason"]
                 except Exception as e:
                     logger.error(f"Supplementary closure lookup failed: {e}")
 

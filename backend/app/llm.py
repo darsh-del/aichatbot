@@ -27,18 +27,12 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 from app.mcp_client import ALLOWED_TOOLS as MCP_ALLOWED_TOOLS
-from app.mcp_client import BUNGEE_SUMMARY_TOOL, call_catalog_tool, load_catalog_tools
+from app.mcp_client import BUNGEE_SUMMARY_TOOL, _DotDict, call_catalog_tool, load_catalog_tools
 from app.retriever import retrieve
 from app.schemas import ChatMessage
 from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
 from app.tools import TOOL_SCHEMAS, dispatch_tool
 from app.session_store import save_turn, should_prompt_login, mark_login_prompted, should_nudge_for_contact
-
-class _DotDict(dict):
-    """Dict that also supports attribute access — litellm expects both."""
-    __getattr__ = dict.__getitem__
-    __setattr__ = dict.__setitem__
-
 
 MAX_TOOL_ITERATIONS = 8
 MAX_OUTPUT_TOKENS = 1500
