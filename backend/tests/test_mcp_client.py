@@ -67,3 +67,36 @@ def test_dotdict_supports_dual_access_for_litellm_transform():
     assert call.function.name == "get_activity"  # attribute access
     params = transform_openai_tool_call_request_to_mcp_tool_call_request(openai_tool=call)
     assert params.name == "get_activity"  # subscript access under the hood
+
+
+@pytest.mark.asyncio
+async def test_empty_slots_hint_reports_closure_when_activity_is_closed(monkeypatch):
+    """Regression for a second bug in the same supplementary-lookup block:
+    get_activity's real shape is {"success": bool, "data": {...activity
+    fields...}}, and _slim() injects _closed_until into that nested "data"
+    dict (where bucketlisttSeasonalClosures actually lives) — not at the top
+    level. The lookup code checked `"_closed_until" in res_obj` (top level),
+    which is always False for a real response, so the closure was silently
+    never detected even once the lookup call itself stopped crashing.
+    """
+    import app.mcp_client as mc
+
+    async def fake_call_catalog_tool(tool_call):
+        return {
+            "result": json.dumps({
+                "success": True,
+                "data": {
+                    "_closed_until": "2026-09-30",
+                    "_closure_reason": "Closed for monsoon",
+                },
+            })
+        }
+
+    monkeypatch.setattr(mc, "call_catalog_tool", fake_call_catalog_tool)
+    result = await mc._postprocess(
+        "get_time_slots",
+        json.dumps({"slots": []}),
+        {"activityId": "abc123", "date": "2026-08-22"},
+    )
+    assert "CLOSED for the season until 2026-09-30" in result["_hint"]
+    assert "Closed for monsoon" in result["_hint"]

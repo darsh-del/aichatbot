@@ -286,10 +286,15 @@ async def _postprocess(fn: str, text: str, tool_args: dict) -> dict:
                     act_result = await call_catalog_tool(dummy_call)
 
                     res_obj = json.loads(act_result.get("result") or "{}")
-                    if "_closed_until" in res_obj:
+                    # get_activity's shape is {"success": bool, "data": {...}} —
+                    # _slim() injects _closed_until into the nested "data" dict
+                    # (where bucketlisttSeasonalClosures actually lives), not at
+                    # the top level, so it must be read from there.
+                    activity_data = res_obj.get("data") if isinstance(res_obj, dict) else None
+                    if isinstance(activity_data, dict) and "_closed_until" in activity_data:
                         is_closed = True
-                        closed_until = res_obj["_closed_until"]
-                        closure_reason = res_obj["_closure_reason"]
+                        closed_until = activity_data["_closed_until"]
+                        closure_reason = activity_data["_closure_reason"]
                 except Exception as e:
                     logger.error(f"Supplementary closure lookup failed: {e}")
 
