@@ -8,7 +8,7 @@ The system actively monitors and alerts on the following 6 failure points:
 
 1. **LLM Out of Credits (402/404)** - Upstream provider billing issue.
 2. **LLM Rate Limits (429)** - Traffic spikes exceeding provider quotas.
-3. **LLM Provider Outage (500+)** - Upstream provider servers are down.
+3. **LLM Provider Outage (500+, 529)** - Upstream provider servers are down or overloaded (529 is Anthropic's overload code).
 4. **Redis Database Down** - Breaks session memory and tool caching.
 5. **Weaviate Database Down** - Breaks RAG (Knowledge Base) retrieval.
 6. **External Tool Failure (MCP)** - External APIs (like booking systems) failing.

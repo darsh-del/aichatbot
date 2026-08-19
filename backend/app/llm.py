@@ -483,7 +483,7 @@ async def stream_chat_response(
             asyncio.create_task(send_critical_alert("llm_credits", err_msg, "Failed to stream chat response"))
         elif "429" in err_msg_lower or "rate limit" in err_msg_lower:
             asyncio.create_task(send_critical_alert("llm_rate_limit", err_msg, "Failed to stream chat response due to rate limits"))
-        elif "500" in err_msg_lower or "502" in err_msg_lower or "503" in err_msg_lower:
+        elif "500" in err_msg_lower or "502" in err_msg_lower or "503" in err_msg_lower or "529" in err_msg_lower or "overloaded" in err_msg_lower:
             asyncio.create_task(send_critical_alert("llm_outage", err_msg, "Upstream LLM provider returned 500+ error"))
 
         yield _sse({"delta": "", "done": True, "error": err_msg})
