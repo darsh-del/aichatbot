@@ -38,7 +38,7 @@ def _send_email_sync(subject: str, body: str) -> None:
     msg.attach(MIMEText(body, "plain"))
 
     try:
-        server = smtplib.SMTP(settings.smtp_server, settings.smtp_port)
+        server = smtplib.SMTP(settings.smtp_server, settings.smtp_port, timeout=10)
         server.starttls()
         server.login(settings.smtp_user, settings.smtp_pass)
         server.send_message(msg)
