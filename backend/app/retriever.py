@@ -117,4 +117,7 @@ def retrieve(query: str, top_k: int = 6) -> str:
 
     except Exception as exc:
         logger.exception("RAG retrieval failed after %.3fs", time.perf_counter() - t_total)
+        from app.notifier import send_critical_alert
+        import asyncio
+        asyncio.create_task(send_critical_alert("weaviate_down", str(exc), f"Failed to retrieve context for query: {query}"))
         return ""

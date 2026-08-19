@@ -477,9 +477,13 @@ async def stream_chat_response(
         logger.exception("Chat request failed after %.3fs", time.perf_counter() - t_request)
         err_msg = _error_message(exc)
         
-        # If it looks like an API credit/not-found error, fire an alert in the background
-        if "404" in err_msg or "402" in err_msg or "credit" in err_msg.lower():
-            from app.notifier import notify_credit_exhausted
-            asyncio.create_task(notify_credit_exhausted(err_msg))
+        from app.notifier import send_critical_alert
+        err_msg_lower = err_msg.lower()
+        if "404" in err_msg_lower or "402" in err_msg_lower or "credit" in err_msg_lower:
+            asyncio.create_task(send_critical_alert("llm_credits", err_msg, "Failed to stream chat response"))
+        elif "429" in err_msg_lower or "rate limit" in err_msg_lower:
+            asyncio.create_task(send_critical_alert("llm_rate_limit", err_msg, "Failed to stream chat response due to rate limits"))
+        elif "500" in err_msg_lower or "502" in err_msg_lower or "503" in err_msg_lower:
+            asyncio.create_task(send_critical_alert("llm_outage", err_msg, "Upstream LLM provider returned 500+ error"))
 
         yield _sse({"delta": "", "done": True, "error": err_msg})

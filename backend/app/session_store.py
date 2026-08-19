@@ -22,6 +22,9 @@ async def init_redis():
             logger.info(f"Connected to Redis at {settings.redis_url}")
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
+            from app.notifier import send_critical_alert
+            import asyncio
+            asyncio.create_task(send_critical_alert("redis_down", str(e), "Failed to initialize Redis connection pool on startup"))
             redis_client = None
 
 async def close_redis():
@@ -71,6 +74,9 @@ async def save_turn(session_id: str, user_msg: str, assistant_msg: str) -> None:
         logger.info(f"Saved turn for session {session_id} (count: {count})")
     except Exception as e:
         logger.error(f"Failed to save turn to Redis for session {session_id}: {e}")
+        from app.notifier import send_critical_alert
+        import asyncio
+        asyncio.create_task(send_critical_alert("redis_down", str(e), f"Failed to save turn for session {session_id}"))
 
 async def get_message_count(session_id: str) -> int:
     """Get the number of user messages in this session."""
