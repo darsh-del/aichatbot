@@ -1,8 +1,17 @@
-# SMTP Alerts (Out of Credits Notifications)
+# Infrastructure Alerting (SMTP)
 
-The chatbot is configured to automatically alert you via email if the underlying LLM provider (e.g., Anthropic, OpenAI) runs out of credits or blocks the request. 
+The chatbot acts as its own SRE (Site Reliability Engineer) and is configured to automatically alert you via email if any critical piece of the infrastructure fails.
 
-This is triggered when the backend catches an API exception containing keywords like `404`, `402`, or `credit`.
+## 🚨 Alert Categories
+
+The system actively monitors and alerts on the following 6 failure points:
+
+1. **LLM Out of Credits (402/404)** - Upstream provider billing issue.
+2. **LLM Rate Limits (429)** - Traffic spikes exceeding provider quotas.
+3. **LLM Provider Outage (500+)** - Upstream provider servers are down.
+4. **Redis Database Down** - Breaks session memory and tool caching.
+5. **Weaviate Database Down** - Breaks RAG (Knowledge Base) retrieval.
+6. **External Tool Failure (MCP)** - External APIs (like booking systems) failing.
 
 ## ⚙️ Environment Variables Required
 
@@ -27,11 +36,13 @@ SMTP_TO=admin@bucketlistt.com
 
 ## 🛡️ Anti-Spam Safety (Debouncing)
 
-If you have zero credits and multiple users are interacting with the chatbot simultaneously, the API will fail repeatedly. To prevent your inbox from being flooded, the `app/notifier.py` script features a **1-hour debounce timer**.
+To prevent your inbox from being flooded if a service goes down during high traffic, the `app/notifier.py` script features dynamic **debounce timers** for each specific type of error:
 
-- When the first error occurs, an email is sent immediately.
-- For the next 3600 seconds (1 hour), any subsequent errors are silently logged and ignored.
-- After 1 hour, the lock resets, and the next error will trigger a new email.
+- **15 Minutes:** Redis Down, Weaviate Down
+- **30 Minutes:** Rate Limits, LLM Outages, MCP Tool Errors
+- **1 Hour:** Out of Credits
+
+For example, if Redis crashes, you will get exactly one email immediately. For the next 15 minutes, any subsequent Redis errors are silently logged. After 15 minutes, the lock resets.
 
 ## 🧪 How to Test
 
