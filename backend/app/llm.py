@@ -475,4 +475,11 @@ async def stream_chat_response(
         logger.info("Request complete — %d delta chunks, total %.3fs", token_count, time.perf_counter() - t_request)
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Chat request failed after %.3fs", time.perf_counter() - t_request)
-        yield _sse({"delta": "", "done": True, "error": _error_message(exc)})
+        err_msg = _error_message(exc)
+        
+        # If it looks like an API credit/not-found error, fire an alert in the background
+        if "404" in err_msg or "402" in err_msg or "credit" in err_msg.lower():
+            from app.notifier import notify_credit_exhausted
+            asyncio.create_task(notify_credit_exhausted(err_msg))
+
+        yield _sse({"delta": "", "done": True, "error": err_msg})
