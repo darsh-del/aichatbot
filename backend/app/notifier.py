@@ -107,14 +107,16 @@ def _send_email_sync(subject: str, body: str) -> None:
         logger.error(f"Failed to send alert email: {e}")
 
 
-async def send_critical_alert(alert_type: str, error_message: str, context: str = "") -> None:
+def send_critical_alert_sync(alert_type: str, error_message: str, context: str = "") -> None:
     """
-    Background task to email admins when a critical infrastructure piece fails.
-    Uses category-specific debounce timers to prevent inbox spam.
+    Debounce-check and email admins when a critical infrastructure piece fails.
+    Fully synchronous (blocking SMTP call included) — safe to call from any thread,
+    including plain worker threads with no running event loop (e.g. via
+    asyncio.to_thread). Async callers should use send_critical_alert instead.
     """
     global _last_alert_times
     now = time.time()
-    
+
     debounce_seconds = ALERT_DEBOUNCE_CONFIG.get(alert_type, ALERT_DEBOUNCE_CONFIG["default"])
     last_sent = _last_alert_times.get(alert_type, 0.0)
 
@@ -143,7 +145,13 @@ async def send_critical_alert(alert_type: str, error_message: str, context: str 
         f"RAW ERROR\n"
         f"  {error_message}\n\n"
         f"Next re-alert for this category is suppressed for "
-        f"{ALERT_DEBOUNCE_CONFIG.get(alert_type, ALERT_DEBOUNCE_CONFIG['default']) // 60} minutes.\n"
+        f"{debounce_seconds // 60} minutes.\n"
     )
 
-    await asyncio.to_thread(_send_email_sync, info["subject"], body)
+    _send_email_sync(info["subject"], body)
+
+
+async def send_critical_alert(alert_type: str, error_message: str, context: str = "") -> None:
+    """Async wrapper for callers already running on the event loop — runs the
+    (blocking) sync core in a worker thread so it never stalls the loop."""
+    await asyncio.to_thread(send_critical_alert_sync, alert_type, error_message, context)
