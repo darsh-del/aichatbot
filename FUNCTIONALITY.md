@@ -152,7 +152,10 @@ enabled, and `CORS_ORIGINS` — no code branching required.
 ## 10. Explicitly out of scope (by design, not yet-missing)
 
 - No payments, bookings, cart, or login — see §3.
-- No server-side conversation persistence — client resends full history each turn.
+- The client still resends full history each turn, but the server now *also* keeps a
+  Redis-backed copy per session ([session_store.py](backend/app/session_store.py)), 2h TTL —
+  used to drive login/contact-info nudge timing and idle-session dashboard summaries
+  ([dashboard.py](backend/app/dashboard.py)), not to shrink request payloads.
 - No automated re-scraping schedule yet — the scrape → upsert pipeline exists but isn't cron'd.
 - Not yet deployed anywhere — researched but unexecuted: Render (backend) + Cloudflare Pages
   (frontend) as the free-tier recommendation.

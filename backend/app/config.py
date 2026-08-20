@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     idle_summary_minutes: int = 15           # inactivity before summarizing a session
     idle_scan_interval_seconds: int = 300    # how often to check for idle sessions
 
+    # SMTP for out-of-credits / critical error notifications
+    smtp_server: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_pass: str = ""
+    smtp_to: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property

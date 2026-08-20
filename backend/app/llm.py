@@ -475,4 +475,15 @@ async def stream_chat_response(
         logger.info("Request complete — %d delta chunks, total %.3fs", token_count, time.perf_counter() - t_request)
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Chat request failed after %.3fs", time.perf_counter() - t_request)
-        yield _sse({"delta": "", "done": True, "error": _error_message(exc)})
+        err_msg = _error_message(exc)
+        
+        from app.notifier import send_critical_alert
+        err_msg_lower = err_msg.lower()
+        if "404" in err_msg_lower or "402" in err_msg_lower or "credit" in err_msg_lower:
+            asyncio.create_task(send_critical_alert("llm_credits", err_msg, "Failed to stream chat response"))
+        elif "429" in err_msg_lower or "rate limit" in err_msg_lower:
+            asyncio.create_task(send_critical_alert("llm_rate_limit", err_msg, "Failed to stream chat response due to rate limits"))
+        elif "500" in err_msg_lower or "502" in err_msg_lower or "503" in err_msg_lower or "529" in err_msg_lower or "overloaded" in err_msg_lower:
+            asyncio.create_task(send_critical_alert("llm_outage", err_msg, "Upstream LLM provider returned 500+ error"))
+
+        yield _sse({"delta": "", "done": True, "error": err_msg})

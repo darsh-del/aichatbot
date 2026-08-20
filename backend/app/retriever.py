@@ -117,4 +117,9 @@ def retrieve(query: str, top_k: int = 6) -> str:
 
     except Exception as exc:
         logger.exception("RAG retrieval failed after %.3fs", time.perf_counter() - t_total)
+        # retrieve() runs off the event loop (called via asyncio.to_thread from
+        # llm.py), so there's no running loop here for asyncio.create_task —
+        # use the sync notifier entrypoint directly instead.
+        from app.notifier import send_critical_alert_sync
+        send_critical_alert_sync("weaviate_down", str(exc), f"Failed to retrieve context for query: {query}")
         return ""

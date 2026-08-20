@@ -373,6 +373,12 @@ async def call_catalog_tool(tool_call) -> dict:
     stack, session = await _fresh_session()
     try:
         result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
+    except Exception as exc:
+        logger.exception("MCP call %s failed after %.3fs", fn, time.perf_counter() - t0)
+        from app.notifier import send_critical_alert
+        import asyncio
+        asyncio.create_task(send_critical_alert("mcp_tool_error", str(exc), f"Failed to execute MCP tool: {fn}"))
+        raise
     finally:
         try:
             await stack.aclose()
