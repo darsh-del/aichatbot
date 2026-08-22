@@ -7,6 +7,8 @@ import { Sidebar } from './components/Sidebar'
 import { QuickChips } from './components/QuickChips'
 import { ActivityModal } from './components/ActivityModal'
 import { LeadModal } from './components/LeadModal'
+import { AttachmentPicker } from './components/AttachmentPicker'
+import type { PendingAttachment } from './api/chat'
 import { MessageContent } from './components/MessageContent'
 import { LoginPromptBanner } from './components/LoginPromptBanner'
 import './App.css'
@@ -86,6 +88,7 @@ function App() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false)
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null)
   const [showLoginPrompt, setShowLoginPrompt] = useState(false)
   const [toolStatus, setToolStatus] = useState<string | null>(null)
