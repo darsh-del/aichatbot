@@ -10,9 +10,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+import json
+
 from app.config import settings
 from app.dashboard import get_summary, idle_scan_loop, list_summaries
 from app.llm import stream_chat_response
+from app.mcp_client import get_activity_by_id
 from app.rate_limit import RateLimitMiddleware
 from app.schemas import ChatRequest, UserInfoRequest
 from app.session_store import init_redis, close_redis, save_user_info
@@ -92,6 +95,28 @@ async def chat(request: ChatRequest, http_request: Request) -> StreamingResponse
         secure=http_request.url.scheme == "https",
     )
     return response
+
+@app.get("/api/activity/{activity_id}")
+async def get_activity(activity_id: str) -> dict:
+    """Full details for one activity — the "click a card for more" endpoint.
+
+    Calls the live catalog directly (same get_activity MCP tool + Redis cache
+    the chat tool loop uses), outside the LLM, so a card click doesn't cost a
+    model round-trip.
+    """
+    if not settings.mcp_server_url:
+        raise HTTPException(503, "Catalog not configured (set MCP_SERVER_URL)")
+    logger.info("GET /api/activity/%s", activity_id)
+    raw = await get_activity_by_id(activity_id)
+    try:
+        parsed = json.loads(raw.get("result") or "{}")
+    except ValueError:
+        parsed = {}
+    data = parsed.get("data") if isinstance(parsed, dict) else None
+    if not data:
+        raise HTTPException(404, "Activity not found")
+    return data
+
 
 @app.post("/api/session/user-info")
 async def store_user_info(request: UserInfoRequest) -> dict:

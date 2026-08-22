@@ -113,6 +113,23 @@ export async function streamChat(
   }
 }
 
+/**
+ * GET /api/activity/{id} — full details for one activity, for the
+ * "tap a comparison-table option for more" flow. Shape is whatever the
+ * live catalog returns (title, price fields, description, etc.), so this
+ * stays loosely typed rather than guessing every possible field.
+ */
+export async function getActivity(
+  activityId: string,
+  baseUrl: string = API_BASE_URL,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${baseUrl}/api/activity/${encodeURIComponent(activityId)}`)
+  if (!res.ok) {
+    throw new Error(`Failed to load activity: ${res.status} ${res.statusText}`)
+  }
+  return (await res.json()) as Record<string, unknown>
+}
+
 export interface UserInfo {
   name: string
   phone: string

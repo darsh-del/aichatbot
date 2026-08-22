@@ -270,20 +270,10 @@ async def _postprocess(fn: str, text: str, tool_args: dict) -> dict:
             
             if activity_id and date_req:
                 try:
-                    # Supplementary lookup to check for closure. Needs a fake
-                    # tool-call object: call_catalog_tool reads .function.name
-                    # (attribute access) while litellm's MCP transform reads
-                    # ["function"]/["name"] (subscript access) — _DotDict supports
-                    # both, unlike a plain pydantic BaseModel (see llm.py's use of
-                    # the same class for real streamed tool calls).
-                    dummy_call = _DotDict(
-                        function=_DotDict(
-                            name="get_activity",
-                            arguments=json.dumps({"identifier": activity_id}),
-                        )
-                    )
-                    # Use call_catalog_tool which handles caching implicitly!
-                    act_result = await call_catalog_tool(dummy_call)
+                    # Supplementary lookup to check for closure — goes through
+                    # get_activity_by_id so caching/slimming apply the same as
+                    # any other catalog call.
+                    act_result = await get_activity_by_id(activity_id)
 
                     res_obj = json.loads(act_result.get("result") or "{}")
                     # get_activity's shape is {"success": bool, "data": {...}} —
@@ -348,6 +338,19 @@ async def _postprocess(fn: str, text: str, tool_args: dict) -> dict:
             "these are NOT Dronecraft perks. Use THIS list, not the inclusion field."
         )
     return result
+
+
+async def get_activity_by_id(identifier: str) -> dict:
+    """Fetch one activity's full (slimmed) record by id, outside the LLM tool loop.
+
+    Reuses call_catalog_tool so caching/slimming/truncation all apply — this is
+    just a direct-call shortcut for callers (e.g. a REST endpoint) that already
+    know which activity they want.
+    """
+    dummy_call = _DotDict(
+        function=_DotDict(name="get_activity", arguments=json.dumps({"identifier": identifier}))
+    )
+    return await call_catalog_tool(dummy_call)
 
 
 async def call_catalog_tool(tool_call) -> dict:

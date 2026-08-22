@@ -5,6 +5,7 @@ import type { ChatMessage, UserInfo } from './api/chat'
 import { Header } from './components/Header'
 import { Sidebar } from './components/Sidebar'
 import { QuickChips } from './components/QuickChips'
+import { ActivityModal } from './components/ActivityModal'
 import { LeadModal } from './components/LeadModal'
 import { MessageContent } from './components/MessageContent'
 import { LoginPromptBanner } from './components/LoginPromptBanner'
@@ -85,6 +86,7 @@ function App() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false)
+  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null)
   const [showLoginPrompt, setShowLoginPrompt] = useState(false)
   const [toolStatus, setToolStatus] = useState<string | null>(null)
   const [loadingPhrase, setLoadingPhrase] = useState(LOADING_PHRASES[0])
@@ -264,7 +266,7 @@ function App() {
 
           {messages.map((m) => (
             <div key={m.id} className={`message-row row--${m.role}`}>
-              <MessageContent content={m.content} role={m.role} />
+              <MessageContent content={m.content} role={m.role} onActivityClick={setSelectedActivityId} />
             </div>
           ))}
 
@@ -330,6 +332,11 @@ function App() {
         isOpen={isLeadModalOpen}
         onClose={() => setIsLeadModalOpen(false)}
         onSubmitLead={sendPromptMessage}
+      />
+
+      <ActivityModal
+        activityId={selectedActivityId}
+        onClose={() => setSelectedActivityId(null)}
       />
     </div>
   )

@@ -144,7 +144,13 @@ When you do escalate, extract available details (name, phone, group_size, activi
 
 **Table format — always use this structure:**
 
-| Feature | Option A | Option B | Option C |
+Column headers MUST be a markdown link wrapping the activity's own `_id` from the
+catalog data, formatted `[Name](activity:<_id>)` — e.g. `[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1)`.
+This is what lets the app show a "more details" card when the user taps an
+option. Never invent an id and never omit the link — if a row genuinely has no
+`_id` (e.g. hypothetical/no live match), use plain text for that column only.
+
+| Feature | [Option A](activity:<_id of A>) | [Option B](activity:<_id of B>) | [Option C](activity:<_id of C>) |
 |---|---|---|---|
 | Distance / Height | 12 km | 16 km | 24 km |
 | Price | ~~₹800~~ ₹650 | ~~₹1,300~~ ₹1,200 | ~~₹1,700~~ ₹1,600 |

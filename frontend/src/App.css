@@ -1202,3 +1202,31 @@ body {
 .formatted-text-wrapper tr:nth-child(even) td {
   background: #FAF8F5;
 }
+
+/* Activity comparison-table links — clickable option headers ("tap for more") */
+.activity-link {
+  cursor: pointer;
+}
+
+/* Activity detail modal — stub styling, reuses .modal-overlay/.modal-content */
+.activity-modal-body {
+  padding: 4px 0;
+}
+
+.activity-modal-price {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-heading);
+  margin: 0 0 12px;
+}
+
+.activity-modal-price s {
+  color: var(--text-muted, #999);
+  font-weight: 400;
+  margin-right: 8px;
+}
+
+.activity-modal-desc {
+  color: var(--text-body, #444);
+  line-height: 1.5;
+}
