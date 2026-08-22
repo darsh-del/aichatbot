@@ -48,9 +48,9 @@ export const AttachmentPicker: React.FC<AttachmentPickerProps> = ({ attachments,
         <div className="attachment-chips">
           {attachments.map((a) => (
             <span key={a.id} className="attachment-chip">
-              📎 {a.filename}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '4px'}}><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg> {a.filename}
               <button type="button" onClick={() => removeAttachment(a.id)} aria-label={`Remove ${a.filename}`}>
-                ✕
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
               </button>
             </span>
           ))}
@@ -71,8 +71,13 @@ export const AttachmentPicker: React.FC<AttachmentPickerProps> = ({ attachments,
         onClick={() => inputRef.current?.click()}
         title="Attach a file"
         aria-label="Attach a file"
+        style={{ background: '#F5F5F4', color: '#1C1917', border: '1px solid #E7E5E4', borderRadius: '12px', cursor: 'pointer', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
       >
-        {uploading ? '⏳' : '📎'}
+        {uploading ? (
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        ) : (
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        )}
       </button>
       {error && <span className="attachment-error">{error}</span>}
     </div>
