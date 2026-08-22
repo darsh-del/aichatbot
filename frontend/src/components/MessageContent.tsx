@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
 interface MessageContentProps {
@@ -84,6 +84,7 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, role, o
         <div className="formatted-text-wrapper">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
+            urlTransform={(url) => (url.startsWith(ACTIVITY_LINK_PREFIX) ? url : defaultUrlTransform(url))}
             components={{
               a: ({ node: _n, href, ...props }) => {
                 if (href?.startsWith(ACTIVITY_LINK_PREFIX)) {
