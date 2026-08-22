@@ -153,3 +153,27 @@ export async function submitUserInfo(
     throw new Error(`Failed to submit user info: ${res.status} ${res.statusText}`)
   }
 }
+
+
+export interface PendingAttachment {
+  id: string
+  filename: string
+  type: string
+}
+
+export interface AttachmentUploadResult {
+  attachment_id: string
+  type: string
+  filename: string
+}
+
+export async function uploadAttachment(file: File): Promise<AttachmentUploadResult> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${API_BASE_URL}/api/chat/attachments`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.detail || `Upload failed (${res.status})`)
+  }
+  return res.json()
+}
