@@ -19,11 +19,11 @@ const uuid = (): string =>
 
 // Feature 01 — Dynamic welcome messages (rotated randomly for freshness)
 const WELCOME_MESSAGES = [
-  "Hey! I'm Bucky, your adventure concierge 🪂 Ask me about bungee jumping, river rafting, paragliding, prices, safety, group discounts — or just tell me what kind of thrill you're after!",
-  "Hey there! I'm Bucky 🪂 Ready to plan something epic? I can help with bungee, rafting, paragliding — or surprise me with what's on your bucket list!",
-  "Hi! Bucky here — your go-to for adventure in Rishikesh and beyond 🏔️ Whether it's prices, safety info, or booking a 117m bungee jump, I've got you covered!",
+  "Hey! I'm Bucky, your adventure concierge 🪂 Ask me about bungee jumping, river rafting, paragliding, prices, safety, group discounts, or just tell me what kind of thrill you're after!",
+  "Hey there! I'm Bucky 🪂 Ready to plan something epic? I can help with bungee, rafting, paragliding, or surprise me with what's on your bucket list!",
+  "Hi! Bucky here, your go-to for adventure in Rishikesh and beyond 🏔️ Whether it's prices, safety info, or booking a 117m bungee jump, I've got you covered!",
   "Welcome! I'm Bucky, and I live for this stuff 🪂 Bungee off a cliff? Raft the Ganges? Paraglide over the mountains? Tell me what excites you and let's make it happen!",
-  "Hey! I'm Bucky — think of me as your adventure-planning buddy 🙌 Ask me anything about activities, prices, group discounts, or what to expect on your first jump!",
+  "Hey! I'm Bucky, think of me as your adventure-planning buddy 🙌 Ask me anything about activities, prices, group discounts, or what to expect on your first jump!",
 ]
 
 const pickWelcome = () => WELCOME_MESSAGES[Math.floor(Math.random() * WELCOME_MESSAGES.length)]
