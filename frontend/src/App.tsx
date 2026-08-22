@@ -122,7 +122,7 @@ function App() {
   }, [isStreaming])
 
   const sendPromptMessage = async (text: string) => {
-    if (!text || isStreaming) return
+    if ((!text && pendingAttachments.length === 0) || isStreaming) return
 
     setError(null)
     const userMessage: DisplayMessage = { id: nextId++, role: 'user', content: text }
@@ -142,7 +142,14 @@ function App() {
     const apiMessages = history
       .filter(m => !(m.role === 'assistant' && isWelcomeMsg(m.content)))
       .filter(m => m.content && m.content.trim().length > 0)
-      .map(({ role, content }) => ({ role, content }))
+      .map(({ id, role, content }) => ({
+        role,
+        content,
+        ...(id === userMessage.id && pendingAttachments.length
+          ? { attachment_ids: pendingAttachments.map((a) => a.id) }
+          : {}),
+      }))
+    setPendingAttachments([])
 
     let fullContent = ''
     try {
@@ -306,6 +313,11 @@ function App() {
         <QuickChips onSelectPrompt={sendPromptMessage} disabled={isStreaming} />
 
         <form className="composer-bar" onSubmit={handleSubmit}>
+          <AttachmentPicker
+            attachments={pendingAttachments}
+            onChange={setPendingAttachments}
+            disabled={isStreaming}
+          />
           <textarea
             rows={1}
             value={input}
