@@ -13,8 +13,14 @@ class ChatMessage(BaseModel):
     """A single message in the conversation, as sent by the client."""
 
     role: Literal["user", "assistant"]
-    # 8000 chars ≈ 2000 tokens — plenty for a real question, blocks token-flood abuse.
     content: str = Field(min_length=1, max_length=8000)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=5)
+
+
+class AttachmentUploadResponse(BaseModel):
+    attachment_id: str
+    type: str        # "image" | "pdf" | "text"
+    filename: str
 
 
 class ChatRequest(BaseModel):
