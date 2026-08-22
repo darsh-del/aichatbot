@@ -98,3 +98,117 @@ def test_tool_loop_includes_bungee_summary_for_bungee_query(monkeypatch):
     tool_names = asyncio.run(_collect_tool_names_seen(messages, monkeypatch))
 
     assert "get_activities_summary" in tool_names
+
+
+# --- StreamSanitizer (dash/activity-ID streaming backstop, §1.2/§2.2) -----
+
+from app.stream_sanitizer import StreamSanitizer
+
+
+def test_sanitizer_strips_em_dash():
+    s = StreamSanitizer()
+    out = s.feed("Nice pick") + s.feed("—") + s.feed(" let's go") + s.flush()
+    assert "—" not in out
+
+
+def test_sanitizer_maps_en_dash_to_hyphen_not_comma():
+    # An en dash is very often a numeric range in this app's own content
+    # ("20–130 kg") — mapping it to a comma would silently change the number.
+    s = StreamSanitizer()
+    out = s.feed("weight 20–130 kg") + s.flush()
+    assert "–" not in out
+    assert "20-130 kg" in out
+
+
+def test_sanitizer_never_touches_markdown_table_syntax():
+    # Regression: an earlier draft of this fix blindly stripped "--", which
+    # would have corrupted this app's own comparison-table header-separator
+    # rows (knowledge_base.md's mandated `|---|---|` format).
+    s = StreamSanitizer()
+    out = s.feed("| Feature | A | B |\n|---|---|---|\n") + s.flush()
+    assert "|---|---|---|" in out
+
+
+def test_sanitizer_strips_object_id_even_when_split_across_chunks():
+    s = StreamSanitizer()
+    out = "".join([
+        s.feed("The activity is 66f1a2b3"),
+        s.feed("c4d5e6f7a8b9c0d1 and it's great"),
+        s.flush(),
+    ])
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+
+
+def test_sanitizer_releases_output_progressively_once_past_the_tail_window():
+    # Backs up the claim in test_chat.py's updated SSE-sequence test: the
+    # 24-char hold-back only delays short replies until flush() — anything
+    # longer streams incrementally well before the response ends.
+    s = StreamSanitizer()
+    released_before_flush = ""
+    for word in ["This ", "is ", "a ", "longer ", "reply ", "well ", "past ", "the ", "buffer ", "window."]:
+        released_before_flush += s.feed(word)
+    assert released_before_flush != ""  # something came out before flush(), not just at the end
+    full = released_before_flush + s.flush()
+    assert full == "This is a longer reply well past the buffer window."
+
+
+def test_sanitizer_preserves_id_inside_activity_link():
+    s = StreamSanitizer()
+    out = "".join([
+        s.feed("[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1)"),
+        s.flush(),
+    ])
+    assert "activity:66f1a2b3c4d5e6f7a8b9c0d1" in out
+
+
+# --- _latest_user_message / _wants_catalog (§3.3 tool-choice gate) --------
+
+from app.llm import _latest_user_message, _wants_catalog
+
+
+def test_latest_user_message_handles_plain_string_content():
+    messages = [{"role": "user", "content": "bungee prices?"}]
+    assert _latest_user_message(messages) == "bungee prices?"
+
+
+def test_latest_user_message_handles_attachment_content_blocks():
+    # Regression: a message with attachment_ids has `content` as a list of
+    # blocks (see build_messages()/_resolve_message_content), not a plain
+    # string. Every regex-based gate in this file must not crash on that shape.
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "what's in this pdf about rafting?"},
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "..."}},
+        ],
+    }]
+    assert "rafting" in _latest_user_message(messages)
+    assert _wants_catalog(messages) is True  # doesn't raise, and matches correctly
+
+
+def test_wants_catalog_true_for_catalog_terms():
+    assert _wants_catalog([{"role": "user", "content": "what rafting packages do you have"}])
+
+
+def test_wants_catalog_false_for_unrelated_chat():
+    assert not _wants_catalog([{"role": "user", "content": "thanks so much!"}])
+
+
+# --- flow_guard.is_protected_turn (§5.2) -----------------------------------
+
+from app.flow_guard import is_protected_turn
+
+
+@pytest.mark.parametrize("text", [
+    "9876543210",      # phone number, mid-login
+    "482913",           # OTP code
+    "yes",               # upsell confirmation
+    "is bungee safe if I have a heart condition?",
+    "I'm really scared of heights",
+])
+def test_is_protected_turn_true_for_flow_and_safety_signals(text):
+    assert is_protected_turn(text) is True
+
+
+def test_is_protected_turn_false_for_ordinary_catalog_question():
+    assert is_protected_turn("what rafting packages do you have in Rishikesh") is False

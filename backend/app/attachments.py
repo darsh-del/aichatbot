@@ -24,8 +24,8 @@ from defusedxml import ElementTree as SafeET
 from docx import Document
 from fastapi import UploadFile
 
+from app import session_store  # module import, not `from ... import redis_client` — see _redis() below
 from app.config import settings
-from app.session_store import redis_client as _redis  # reuse the existing shared Redis client
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,30 @@ class AttachmentError(Exception):
         self.status_code = status_code
         self.message = message
         super().__init__(message)
+
+
+def _redis():
+    """Read session_store.redis_client fresh on every call.
+
+    Bug fixed here: an earlier version of this module did
+    `from app.session_store import redis_client as _redis` at import time,
+    which copies the (then-None) reference once and never sees init_redis()
+    reassign session_store.redis_client at real app startup — every call
+    would raise "'NoneType' object has no attribute 'set'/'get'" regardless
+    of Redis being configured and connected. Reading the module attribute at
+    call time (the same pattern already used everywhere else in this
+    codebase, e.g. session_store.py's own functions and every test that
+    monkeypatches `session_store.redis_client`) fixes it.
+
+    Attachments have no fallback storage — unlike session_store's own
+    functions, which no-op quietly when Redis is unavailable (chat still
+    works without history), a missing attachment silently dropped from the
+    model's context is a worse failure than an explicit error. Fail loud.
+    """
+    client = session_store.redis_client
+    if client is None:
+        raise AttachmentError(503, "Attachments are temporarily unavailable — try again shortly.")
+    return client
 
 
 @dataclass
@@ -169,7 +193,7 @@ async def store_attachment(file: UploadFile) -> StoredAttachment:
 
     if media_type in ("text", "docx"):
         text = raw.decode("utf-8", errors="replace") if media_type == "text" else _extract_docx_text(raw)
-        await _redis.set(
+        await _redis().set(
             f"attachment:{attachment_id}",
             json.dumps({"media_type": media_type, "filename": filename, "text": text}),
             ex=_ATTACHMENT_TTL_SECONDS,
@@ -178,7 +202,7 @@ async def store_attachment(file: UploadFile) -> StoredAttachment:
         Path(settings.attachments_dir).mkdir(parents=True, exist_ok=True)
         disk_path = Path(settings.attachments_dir) / attachment_id
         disk_path.write_bytes(raw)
-        await _redis.set(
+        await _redis().set(
             f"attachment:{attachment_id}",
             json.dumps({
                 "media_type": media_type, "filename": filename,
@@ -192,7 +216,19 @@ async def store_attachment(file: UploadFile) -> StoredAttachment:
 
 
 async def resolve_attachment(attachment_id: str) -> ResolvedAttachment | None:
-    raw = await _redis.get(f"attachment:{attachment_id}")
+    """Read-side: unlike store_attachment, degrade gracefully (return None)
+    rather than raise when Redis is unreachable — losing one attachment from
+    a turn's context is recoverable for the user (the chat still answers,
+    just without it); failing the whole in-flight chat stream over it is not
+    a good tradeoff for what's already a best-effort enrichment at this point
+    in the pipeline. The caller (llm.py::_resolve_message_content) already
+    treats None the same way for "expired"/"never existed"/"Redis down".
+    """
+    client = session_store.redis_client
+    if client is None:
+        logger.warning("Attachment %s could not be resolved — Redis unavailable", attachment_id)
+        return None
+    raw = await client.get(f"attachment:{attachment_id}")
     if raw is None:
         return None  # expired or never existed — caller degrades gracefully
     meta = json.loads(raw)

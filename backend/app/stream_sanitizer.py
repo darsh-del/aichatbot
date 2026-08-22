@@ -19,9 +19,13 @@ conversation it continues to reason over.
 """
 import re
 
-_DASH_MAP = str.maketrans({"—": ",", "–": ","})  # em/en dash only — never touch ASCII "-" or "--",
-                                                   # which this app's own markdown tables rely on
-                                                   # (see the comparison-table `|---|---|` syntax).
+# Em dash -> comma (its usual job as a clause separator). En dash -> hyphen,
+# NOT comma — an en dash is very often a numeric range in this KB's own
+# content ("20-130 kg", "500-1,000 jumps", "October-June"); mapping it to a
+# comma would turn "20-130 kg" into "20,130 kg", which reads as a different
+# number entirely. Neither touches ASCII "-"/"--", which this app's own
+# markdown tables rely on (see the comparison-table `|---|---|` syntax).
+_DASH_MAP = str.maketrans({"—": ",", "–": "-"})
 _RAW_OBJECTID_RE = re.compile(r"(?<!activity:)\b[a-f0-9]{24}\b")
 
 
@@ -34,12 +38,23 @@ class StreamSanitizer:
         self._buf = ""
 
     def feed(self, text: str) -> str:
-        """Add newly streamed text; return the portion now safe to send to the client."""
+        """Add newly streamed text; return the portion now safe to send to the client.
+
+        The ObjectId regex runs against the WHOLE buffer before any slicing —
+        not just the portion about to be released. Running it only on the
+        release slice (an earlier version of this method did that) misses an
+        ID that straddles the release/retain boundary: half of it goes out
+        in this call's release, the other half sits in the retained tail,
+        and neither half alone is 24 hex chars, so neither ever matches.
+        Substituting first, then slicing, guarantees any complete match is
+        caught while it's still whole in one buffer.
+        """
         self._buf += text.translate(_DASH_MAP)
+        self._buf = _RAW_OBJECTID_RE.sub("", self._buf)
         if len(self._buf) <= self._TAIL:
             return ""
         safe, self._buf = self._buf[: -self._TAIL], self._buf[-self._TAIL :]
-        return _RAW_OBJECTID_RE.sub("", safe)
+        return safe
 
     def flush(self) -> str:
         """Call once when the stream ends to release the held-back tail."""

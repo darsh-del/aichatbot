@@ -24,6 +24,12 @@ dependencies = [
     "anthropic>=0.49",
     "mcp>=1.9,<2",
     "redis[hiredis]>=5.0",  # MCP result cache (app/cache.py) + session store (app/session_store.py) — no-ops if REDIS_URL unset
+    # Attachments (app/attachments.py)
+    "python-multipart>=0.0.9",   # FastAPI's file/form upload parsing
+    "python-docx>=0.8.6",        # pin: 0.8.6+ has the XXE fix (CVE-2016-5851)
+    "defusedxml>=0.7",           # safe XML parsing for docx extraction
+    "filetype>=1.2",             # magic-byte content-type sniffing
+    "clamd>=1.0",                # ClamAV daemon client
 ]
 
 [project.optional-dependencies]

@@ -31,9 +31,11 @@ from app.mcp_client import BUNGEE_SUMMARY_TOOL, _DotDict, call_catalog_tool, loa
 from app.retriever import retrieve
 from app.schemas import ChatMessage
 from app.attachments import resolve_attachment
+from app.flow_guard import is_protected_turn
 from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
 from app.tools import TOOL_SCHEMAS, dispatch_tool
 from app.session_store import save_turn, should_prompt_login, mark_login_prompted, should_nudge_for_contact
+from app.stream_sanitizer import StreamSanitizer
 
 MAX_TOOL_ITERATIONS = 8
 MAX_OUTPUT_TOKENS = 1500
@@ -50,11 +52,50 @@ def _wants_bungee_summary(messages: list[dict]) -> bool:
     is a compact, bungee-only shape (no location/media) — offering it for
     every topic would just reproduce the old over-fetch problem elsewhere.
     """
-    latest_user = next(
-        (m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"),
-        "",
-    )
-    return bool(_BUNGEE_RE.search(latest_user))
+    return bool(_BUNGEE_RE.search(_latest_user_message(messages)))
+
+
+# Cheap, deterministic pre-check for "this message plausibly needs the live
+# catalog" — same pattern as _wants_bungee_summary above. Unlike a *blocking*
+# gate, this one can only be wrong in the safe direction: a false positive
+# just means an unnecessary forced tool call (a latency cost, not a
+# correctness issue); a false negative just falls back to tool_choice="auto",
+# which still lets the model call a tool on its own if it decides to. See
+# app/flow_guard.py::is_protected_turn for why mid-flow/safety-sensitive
+# messages never even reach this check.
+_CATALOG_RE = re.compile(
+    r"bung|raft|paraglid|zipline|flying fox|camp|balloon|paramotor|activit|"
+    r"price|book|slot|avail|destination|rishikesh|mussoorie|manali|jaipur|"
+    r"jim corbett|tehri|ujjain|bir billing",
+    re.IGNORECASE,
+)
+
+
+def _latest_user_message(messages: list[dict]) -> str:
+    """Text of the latest user message, regardless of content shape.
+
+    A message with attachments has `content` as a list of blocks (see
+    build_messages()/_resolve_message_content in this file), not a plain
+    string — _wants_bungee_summary above already assumed plain strings only,
+    which would TypeError on a regex search against a list. This handles
+    both shapes so every regex-based gate in this file can rely on it.
+    """
+    for m in reversed(messages):
+        if m.get("role") != "user":
+            continue
+        content = m.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return " ".join(
+                block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"
+            )
+        return ""
+    return ""
+
+
+def _wants_catalog(messages: list[dict]) -> bool:
+    return bool(_CATALOG_RE.search(_latest_user_message(messages)))
 
 
 # -- Cached base prompt (file doesn't change at runtime) ---------------------
@@ -345,7 +386,21 @@ async def _run_tool_loop(
         t for t in all_tools if t["function"]["name"] != "search_web"
     ] if mcp_tools else all_tools
     for iteration in range(MAX_TOOL_ITERATIONS):
-        if iteration < 1 and mcp_tools:
+        # Force a tool call only when it's actually plausible the message
+        # needs the catalog — never for mid-flow/safety-sensitive turns
+        # (OTP codes, phone numbers, "yes" to an add-on, safety questions),
+        # which always fall through to "auto" regardless of _wants_catalog.
+        # See flow_guard.py for why: a false positive here just costs one
+        # unnecessary forced tool call, never a blocked response, but a
+        # protected turn getting force-routed toward the catalog tools is
+        # still worth avoiding on principle.
+        should_force = (
+            iteration < 1
+            and mcp_tools
+            and not is_protected_turn(_latest_user_message(messages))
+            and _wants_catalog(messages)
+        )
+        if should_force:
             iter_tools = first_iter_tools
             iter_choice = "required"
         else:
@@ -477,15 +532,22 @@ async def stream_chat_response(
 
         token_count = 0
         assistant_content = []
+        sanitizer = StreamSanitizer()
         async for event in _run_tool_loop(messages, session_id):
             if isinstance(event, tuple):
                 _, delta = event
                 if delta:
                     token_count += 1
-                    assistant_content.append(delta)
-                    yield _sse({"delta": delta, "done": False})
+                    assistant_content.append(delta)  # raw text — for history/session save, never sanitized
+                    clean = sanitizer.feed(delta)     # sanitized — this is what the client actually sees
+                    if clean:
+                        yield _sse({"delta": clean, "done": False})
             else:
                 yield _sse({"status": event, "done": False})
+
+        tail = sanitizer.flush()
+        if tail:
+            yield _sse({"delta": tail, "done": False})
 
         # Save the turn to Redis session
         user_msg = next((m.content for m in reversed(chat_messages) if m.role == "user"), "")

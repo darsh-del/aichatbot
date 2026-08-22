@@ -27,17 +27,33 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
+  clamav:
+    # Attachment malware scanning (app/attachments.py::_scan_or_raise). The
+    # virus-definition DB is large and downloads on first boot — the backend
+    # can come up before this is ready to scan; _scan_or_raise fails closed
+    # (503) rather than skip the scan during that window, so it's a startup
+    # delay for uploads, not a security gap.
+    image: clamav/clamav:1.3
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    restart: unless-stopped
+
   backend:
     build: ./backend
     env_file: ./backend/.env
     environment:
       WEAVIATE_URL: http://weaviate:8080
       REDIS_URL: redis://redis:6379/0
+      CLAMD_HOST: clamav
+      CLAMD_PORT: 3310
     ports:
       - "8000:8000"
     depends_on:
       - weaviate
       - redis
+      - clamav
     restart: unless-stopped
 
   frontend:
@@ -58,3 +74,4 @@ services:
 volumes:
   weaviate_data:
   redis_data:
+  clamav_data:
