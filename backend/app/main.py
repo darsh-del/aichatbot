@@ -15,7 +15,7 @@ import json
 from app.config import settings
 from app.dashboard import get_summary, idle_scan_loop, list_summaries
 from app.llm import stream_chat_response
-from app.mcp_client import get_activity_by_id
+from app.mcp_client import get_activity_by_id, close_http_client
 from app.rate_limit import RateLimitMiddleware
 from app.schemas import ChatRequest, UserInfoRequest, AttachmentUploadResponse
 from app.session_store import init_redis, close_redis, save_user_info
@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI):
     yield
     scan_task.cancel()
     await close_redis()
+    await close_http_client()
     logger.info("Shutting down")
 
 

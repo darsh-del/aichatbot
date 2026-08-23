@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import time
+import httpx
 from contextlib import AsyncExitStack
 
 import litellm.experimental_mcp_client as litellm_mcp
@@ -89,17 +90,45 @@ ALLOWED_TOOLS = {
 }
 
 
+
+# Shared, keep-alive HTTP transport — reused across every MCP call so the
+# TCP/TLS handshake isn't redone per call. Each call still creates its own
+# fresh ClientSession (below) — only the transport connection is pooled,
+# never the session itself, which is the part that isn't safe to share
+# across concurrent calls (see the docstring on _fresh_session below).
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient()
+    return _http_client
+
+
+async def close_http_client() -> None:
+    """Call from the app lifespan shutdown so the pooled connections close cleanly."""
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
+
+
 async def _fresh_session():
     """Create a fresh MCP session. Returns (stack, session).
 
     Caller MUST call stack.aclose() when done — never hold the session across
     an async generator yield, or anyio cancel scopes will leak into Starlette's
     task groups and crash the streaming response.
+
+    The session itself is always freshly created per call (safe under this
+    app's parallel-tool-call fan-out); only the underlying HTTP transport
+    connection is reused, via the shared client below.
     """
     stack = AsyncExitStack()
     await stack.__aenter__()
     read, write, _ = await stack.enter_async_context(
-        streamablehttp_client(settings.mcp_server_url)
+        streamablehttp_client(settings.mcp_server_url, http_client=_get_http_client())
     )
     session = await stack.enter_async_context(ClientSession(read, write))
     await session.initialize()
