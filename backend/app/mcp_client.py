@@ -91,11 +91,18 @@ ALLOWED_TOOLS = {
 
 
 
-# Shared, keep-alive HTTP transport — reused across every MCP call so the
-# TCP/TLS handshake isn't redone per call. Each call still creates its own
-# fresh ClientSession (below) — only the transport connection is pooled,
-# never the session itself, which is the part that isn't safe to share
-# across concurrent calls (see the docstring on _fresh_session below).
+# ponytail: HTTP transport reuse was attempted here (a shared httpx.AsyncClient
+# passed into streamablehttp_client's http_client= kwarg) but reverted after
+# live testing — the installed mcp SDK (1.28.1) doesn't have an http_client
+# parameter at all; it takes httpx_client_factory instead, and internally does
+# `async with client:` on whatever the factory returns, closing it at the end
+# of every single call. Passing a shared client through that factory would
+# just get it closed after the first request, breaking every call after.
+# Doing this correctly needs a wrapper client whose __aexit__ is a no-op (real
+# close deferred to app shutdown) — untested complexity, not worth adding
+# without dedicated test coverage. Upgrade path: revisit if a newer mcp SDK
+# version supports passing an already-open client directly, or add the no-op
+# wrapper with its own test once this optimization is worth the added risk.
 _http_client: httpx.AsyncClient | None = None
 
 
@@ -121,14 +128,14 @@ async def _fresh_session():
     an async generator yield, or anyio cancel scopes will leak into Starlette's
     task groups and crash the streaming response.
 
-    The session itself is always freshly created per call (safe under this
-    app's parallel-tool-call fan-out); only the underlying HTTP transport
-    connection is reused, via the shared client below.
+    A fresh TCP/TLS connection per call, same as before this file's latency
+    pass — see the ponytail comment above for why transport reuse isn't
+    actually wired in yet despite _http_client/_get_http_client existing.
     """
     stack = AsyncExitStack()
     await stack.__aenter__()
     read, write, _ = await stack.enter_async_context(
-        streamablehttp_client(settings.mcp_server_url, http_client=_get_http_client())
+        streamablehttp_client(settings.mcp_server_url)
     )
     session = await stack.enter_async_context(ClientSession(read, write))
     await session.initialize()

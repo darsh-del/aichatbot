@@ -25,7 +25,7 @@ MUST_REACH_FULL_PIPELINE = [
     "482913",
     "yes",
     "what should I wear for rafting",
-    "“ r” ?— — _” —? Y“ ”,— - “  ” ” _“ ” ” r؅ , ” “  ” _” \"",
+    "मुझे राफ्टिंग के बारे में बताओ",  # Hindi: "tell me about rafting" — must survive non-English input
     "is it raining in Rishikesh this week",
     "can my 10 year old do the giant swing",
     "what's your cancellation policy",
@@ -53,14 +53,14 @@ async def main() -> None:
     for q in MUST_REACH_FULL_PIPELINE:
         resp = await _get_response(q)
         flag = "✅ ok" if len(resp) >= 30 else "⚠️ CHECK MANUALLY"
-        print(f"[{flag}] {q!r}\\n    -> {resp[:150]!r}\\n")
+        print(f"[{flag}] {q!r}\n    -> {resp[:150]!r}\n")
 
     print("=== Must still redirect (out-of-scope control cases) ===")
     for q in MUST_STILL_REDIRECT:
         resp = await _get_response(q)
         looks_relevant = any(m in resp.lower() for m in _LIKELY_REDIRECT_MARKERS)
         flag = "✅ ok" if looks_relevant else "⚠️ CHECK MANUALLY — may have answered instead of redirecting"
-        print(f"[{flag}] {q!r}\\n    -> {resp[:150]!r}\\n")
+        print(f"[{flag}] {q!r}\n    -> {resp[:150]!r}\n")
 
 
 if __name__ == "__main__":
