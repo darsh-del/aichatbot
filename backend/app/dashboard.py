@@ -159,7 +159,30 @@ async def idle_scan_loop() -> None:
         try:
             await asyncio.sleep(settings.idle_scan_interval_seconds)
             await summarize_idle_sessions()
+            _sweep_expired_attachments()
         except asyncio.CancelledError:
             break
         except Exception:
             logger.exception("Idle session scan pass failed")
+
+
+def _sweep_expired_attachments() -> None:
+    """Delete on-disk attachment files older than the attachment TTL.
+
+    Redis's own TTL already expires the small metadata key pointing at each
+    file (see app/attachments.py); this removes the orphaned bytes on disk
+    that metadata key used to point at, since Redis expiry doesn't touch the
+    filesystem. Reuses this loop instead of a second background task.
+    """
+    from app.attachments import _ATTACHMENT_TTL_SECONDS
+
+    directory = Path(settings.attachments_dir)
+    if not directory.exists():
+        return
+    cutoff = time.time() - _ATTACHMENT_TTL_SECONDS
+    for f in directory.iterdir():
+        if f.is_file() and f.stat().st_mtime < cutoff:
+            try:
+                f.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Failed to remove expired attachment file %s", f)

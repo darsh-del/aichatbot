@@ -119,7 +119,13 @@ async def search_web(query: str) -> dict:
         response = await get_aclient().messages.create(
             model=settings.web_search_model,
             max_tokens=1024,
-            tools=[{"type": "web_search_20260209", "name": "web_search"}],
+            # web_search_20260209 (dynamic filtering) requires Opus 5/4.8/4.7/4.6,
+            # Sonnet 5, or Sonnet 4.6 — WEB_SEARCH_MODEL defaults to claude-haiku-4-5
+            # (deliberately cheap/fast, see config.py), which isn't on that list and
+            # 400s with "does not support programmatic tool calling" on the newer
+            # variant. The basic variant has no such model restriction and is the
+            # correct choice for whatever model WEB_SEARCH_MODEL is actually set to.
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": query}],
         )
         text_parts = [b.text for b in response.content if hasattr(b, "text")]

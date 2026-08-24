@@ -7,6 +7,8 @@ import { Sidebar } from './components/Sidebar'
 import { QuickChips } from './components/QuickChips'
 import { ActivityModal } from './components/ActivityModal'
 import { LeadModal } from './components/LeadModal'
+import { AttachmentPicker } from './components/AttachmentPicker'
+import type { PendingAttachment } from './api/chat'
 import { MessageContent } from './components/MessageContent'
 import { LoginPromptBanner } from './components/LoginPromptBanner'
 import './App.css'
@@ -17,11 +19,11 @@ const uuid = (): string =>
 
 // Feature 01 — Dynamic welcome messages (rotated randomly for freshness)
 const WELCOME_MESSAGES = [
-  "Hey! I'm Bucky, your adventure concierge 🪂 Ask me about bungee jumping, river rafting, paragliding, prices, safety, group discounts — or just tell me what kind of thrill you're after!",
-  "Hey there! I'm Bucky 🪂 Ready to plan something epic? I can help with bungee, rafting, paragliding — or surprise me with what's on your bucket list!",
-  "Hi! Bucky here — your go-to for adventure in Rishikesh and beyond 🏔️ Whether it's prices, safety info, or booking a 117m bungee jump, I've got you covered!",
+  "Hey! I'm Bucky, your adventure concierge 🪂 Ask me about bungee jumping, river rafting, paragliding, prices, safety, group discounts, or just tell me what kind of thrill you're after!",
+  "Hey there! I'm Bucky 🪂 Ready to plan something epic? I can help with bungee, rafting, paragliding, or surprise me with what's on your bucket list!",
+  "Hi! Bucky here, your go-to for adventure in Rishikesh and beyond 🏔️ Whether it's prices, safety info, or booking a 117m bungee jump, I've got you covered!",
   "Welcome! I'm Bucky, and I live for this stuff 🪂 Bungee off a cliff? Raft the Ganges? Paraglide over the mountains? Tell me what excites you and let's make it happen!",
-  "Hey! I'm Bucky — think of me as your adventure-planning buddy 🙌 Ask me anything about activities, prices, group discounts, or what to expect on your first jump!",
+  "Hey! I'm Bucky, think of me as your adventure-planning buddy 🙌 Ask me anything about activities, prices, group discounts, or what to expect on your first jump!",
 ]
 
 const pickWelcome = () => WELCOME_MESSAGES[Math.floor(Math.random() * WELCOME_MESSAGES.length)]
@@ -86,6 +88,7 @@ function App() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false)
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null)
   const [showLoginPrompt, setShowLoginPrompt] = useState(false)
   const [toolStatus, setToolStatus] = useState<string | null>(null)
@@ -122,7 +125,7 @@ function App() {
   }, [isStreaming])
 
   const sendPromptMessage = async (text: string) => {
-    if (!text || isStreaming) return
+    if ((!text && pendingAttachments.length === 0) || isStreaming) return
 
     setError(null)
     const userMessage: DisplayMessage = { id: nextId++, role: 'user', content: text }
@@ -142,7 +145,14 @@ function App() {
     const apiMessages = history
       .filter(m => !(m.role === 'assistant' && isWelcomeMsg(m.content)))
       .filter(m => m.content && m.content.trim().length > 0)
-      .map(({ role, content }) => ({ role, content }))
+      .map(({ id, role, content }) => ({
+        role,
+        content,
+        ...(id === userMessage.id && pendingAttachments.length
+          ? { attachment_ids: pendingAttachments.map((a) => a.id) }
+          : {}),
+      }))
+    setPendingAttachments([])
 
     let fullContent = ''
     try {
@@ -306,6 +316,11 @@ function App() {
         <QuickChips onSelectPrompt={sendPromptMessage} disabled={isStreaming} />
 
         <form className="composer-bar" onSubmit={handleSubmit}>
+          <AttachmentPicker
+            attachments={pendingAttachments}
+            onChange={setPendingAttachments}
+            disabled={isStreaming}
+          />
           <textarea
             rows={1}
             value={input}

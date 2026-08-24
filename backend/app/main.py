@@ -15,10 +15,12 @@ import json
 from app.config import settings
 from app.dashboard import get_summary, idle_scan_loop, list_summaries
 from app.llm import stream_chat_response
-from app.mcp_client import get_activity_by_id
+from app.mcp_client import get_activity_by_id, close_http_client
 from app.rate_limit import RateLimitMiddleware
-from app.schemas import ChatRequest, UserInfoRequest
+from app.schemas import ChatRequest, UserInfoRequest, AttachmentUploadResponse
 from app.session_store import init_redis, close_redis, save_user_info
+from app.attachments import store_attachment, AttachmentError
+from fastapi import UploadFile, File
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,6 +43,7 @@ async def lifespan(app: FastAPI):
     yield
     scan_task.cancel()
     await close_redis()
+    await close_http_client()
     logger.info("Shutting down")
 
 
@@ -162,3 +165,21 @@ def get_session_summary(session_id: str, http_request: Request) -> dict:
     if record is None:
         raise HTTPException(404, "No summary for this session (not yet idle-summarized, or unknown id)")
     return record
+
+@app.post("/api/chat/attachments", response_model=AttachmentUploadResponse)
+async def upload_attachment(file: UploadFile = File(...)) -> AttachmentUploadResponse:
+    """Validate, scan, and store one attachment. Returns an id to reference
+    from a subsequent /api/chat call — see schemas.ChatMessage.attachment_ids.
+
+    Multipart, not JSON: files don't belong in a JSON body (base64 inflates
+    the payload ~33% and breaks the existing text-length cap semantics on
+    ChatMessage.content).
+    """
+    try:
+        result = await store_attachment(file)
+    except AttachmentError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    logger.info("Attachment stored: id=%s type=%s size=%d", result.attachment_id, result.media_type, result.size_bytes)
+    return AttachmentUploadResponse(
+        attachment_id=result.attachment_id, type=result.media_type, filename=result.filename
+    )

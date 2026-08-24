@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     smtp_pass: str = ""
     smtp_to: str = ""
 
+    # Attachments (§4) — all optional; the feature no-ops if attachment_ids
+    # is never sent, same pattern as MCP_SERVER_URL/WEAVIATE_URL.
+    attachments_dir: str = "/tmp/chatbot-attachments"  # local disk, TTL-swept — see app/dashboard.py
+    attachment_max_image_mb: int = 10       # matches Claude's own per-image cap
+    attachment_max_pdf_mb: int = 32         # matches Claude's request-body cap for documents
+    attachment_max_docx_mb: int = 8
+    attachment_max_per_message: int = 5
+    clamd_host: str = "localhost"
+    clamd_port: int = 3310
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property

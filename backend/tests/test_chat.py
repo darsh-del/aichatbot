@@ -100,11 +100,18 @@ def test_chat_streams_expected_sse_frame_sequence(monkeypatch):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
 
+    # Updated for the StreamSanitizer backstop (app/stream_sanitizer.py): it
+    # holds back the last 24 characters of output at all times so a Mongo
+    # ObjectId split across provider stream chunks can never be missed (see
+    # test_llm.py's sanitizer tests). "Hello world!" is only 12 characters,
+    # under that hold-back window, so nothing releases until the final
+    # flush — the whole reply arrives in one delta instead of three small
+    # ones. This is expected, not a regression: a real response of any
+    # normal length still streams progressively, just trailing the true
+    # generation by a small, roughly-constant ~24-char buffer.
     frames = _sse_frames(response.text)
     assert frames == [
-        'data: {"delta": "Hello", "done": false}',
-        'data: {"delta": " world", "done": false}',
-        'data: {"delta": "!", "done": false}',
+        'data: {"delta": "Hello world!", "done": false}',
         'data: {"delta": "", "done": true}',
     ]
 

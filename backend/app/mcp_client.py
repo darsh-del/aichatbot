@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import time
+import httpx
 from contextlib import AsyncExitStack
 
 import litellm.experimental_mcp_client as litellm_mcp
@@ -89,12 +90,47 @@ ALLOWED_TOOLS = {
 }
 
 
+
+# ponytail: HTTP transport reuse was attempted here (a shared httpx.AsyncClient
+# passed into streamablehttp_client's http_client= kwarg) but reverted after
+# live testing — the installed mcp SDK (1.28.1) doesn't have an http_client
+# parameter at all; it takes httpx_client_factory instead, and internally does
+# `async with client:` on whatever the factory returns, closing it at the end
+# of every single call. Passing a shared client through that factory would
+# just get it closed after the first request, breaking every call after.
+# Doing this correctly needs a wrapper client whose __aexit__ is a no-op (real
+# close deferred to app shutdown) — untested complexity, not worth adding
+# without dedicated test coverage. Upgrade path: revisit if a newer mcp SDK
+# version supports passing an already-open client directly, or add the no-op
+# wrapper with its own test once this optimization is worth the added risk.
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient()
+    return _http_client
+
+
+async def close_http_client() -> None:
+    """Call from the app lifespan shutdown so the pooled connections close cleanly."""
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
+
+
 async def _fresh_session():
     """Create a fresh MCP session. Returns (stack, session).
 
     Caller MUST call stack.aclose() when done — never hold the session across
     an async generator yield, or anyio cancel scopes will leak into Starlette's
     task groups and crash the streaming response.
+
+    A fresh TCP/TLS connection per call, same as before this file's latency
+    pass — see the ponytail comment above for why transport reuse isn't
+    actually wired in yet despite _http_client/_get_http_client existing.
     """
     stack = AsyncExitStack()
     await stack.__aenter__()
