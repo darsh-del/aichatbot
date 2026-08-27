@@ -17,6 +17,11 @@ Key settings:
     DASHBOARD_API_KEY      — bearer token guarding GET /api/admin/session-summaries (optional,
                              endpoints return 503 if unset — see app/dashboard.py)
     IDLE_SUMMARY_MINUTES   — inactivity before a session is summarized for the dashboard, default 15
+    SUMMARY_WEBHOOK_URL    — optional; POSTed with every newly generated session summary
+                             (see app/dashboard.py _send_webhook). Blank = feature off.
+    SUMMARY_WEBHOOK_SECRET — optional HMAC-SHA256 secret used to sign SUMMARY_WEBHOOK_URL
+                             deliveries (X-Webhook-Signature header). Recommended whenever
+                             SUMMARY_WEBHOOK_URL is set; deliveries go out unsigned without it.
 """
 import os
 
@@ -54,6 +59,10 @@ class Settings(BaseSettings):
     dashboard_api_key: str = ""              # blank = /api/admin/* returns 503
     idle_summary_minutes: int = 15           # inactivity before summarizing a session
     idle_scan_interval_seconds: int = 300    # how often to check for idle sessions
+    # Push delivery of generated summaries to an external system — optional,
+    # blank = off. See app/dashboard.py _send_webhook for retry/signing.
+    summary_webhook_url: str = ""
+    summary_webhook_secret: str = ""
 
     # SMTP for out-of-credits / critical error notifications
     smtp_server: str = ""

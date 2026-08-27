@@ -10,12 +10,16 @@ data/session_summaries.json — the same "local JSON file" pattern this repo
 already uses for backend/data/leads.json.
 
 Storage is deliberately decoupled from delivery: GET /api/admin/session-
-summaries* (see app/main.py) lets a dashboard pull this data today. Once
-you have a real webhook receiver, wire a POST call right after
-_append_summary() below — everything needed (the record, retry on your
-end) is already generated at that point.
+summaries* (see app/main.py) lets a dashboard pull this data today, and
+_send_webhook() below pushes each freshly generated summary out too. The
+pull endpoint is left in place on purpose as the push side's backstop: a
+webhook send that exhausts its retries just logs and moves on (see
+_send_webhook's docstring for why), and GET .../session-summaries?since=
+lets the receiver backfill anything a failed delivery missed.
 """
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import time
@@ -23,6 +27,7 @@ from pathlib import Path
 
 from app import session_store
 from app.config import settings
+from app.mcp_client import _get_http_client
 from app.tools import get_aclient
 
 logger = logging.getLogger(__name__)
@@ -101,6 +106,89 @@ def _append_summary(record: dict) -> None:
     SUMMARIES_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+_WEBHOOK_TIMEOUT_SECONDS = 5.0
+_WEBHOOK_MAX_ATTEMPTS = 3          # 1 try + 2 retries — the pull endpoint is the real backstop
+_WEBHOOK_RETRY_STATUSES = {408, 429}  # plus any 5xx; see _send_webhook
+
+
+def _sign_webhook(body: bytes, timestamp: str) -> str:
+    """HMAC-SHA256 over "<timestamp>.<body>", Stripe-style, so a captured
+    request can't be replayed indefinitely — the receiver checks both the
+    signature and that the timestamp is recent.
+    """
+    mac = hmac.new(settings.summary_webhook_secret.encode("utf-8"), b"%s.%s" % (timestamp.encode(), body), hashlib.sha256)
+    return mac.hexdigest()
+
+
+async def _send_webhook(record: dict) -> None:
+    """Best-effort push of a freshly generated summary to an external system.
+
+    Off entirely if SUMMARY_WEBHOOK_URL isn't set — same convention as every
+    other optional feature here. Never raises: the record is already
+    durably saved to SUMMARIES_FILE by the time this runs, so a delivery
+    failure here must never re-trigger summarization or block
+    mark_summarized() — callers can always backfill via
+    GET /api/admin/session-summaries?since=.
+
+    Retries a bounded number of times, with backoff, on transient failures
+    (connection errors, timeouts, 408/429, any 5xx). Does not retry on other
+    4xx — that means the request itself is wrong (bad URL, auth, payload),
+    and retrying it just fails again identically.
+    """
+    if not settings.summary_webhook_url:
+        return
+
+    body = json.dumps(record).encode("utf-8")
+    client = _get_http_client()
+    delay = 1.0
+    for attempt in range(1, _WEBHOOK_MAX_ATTEMPTS + 1):
+        timestamp = str(int(time.time()))
+        headers = {"Content-Type": "application/json"}
+        if settings.summary_webhook_secret:
+            headers["X-Webhook-Signature"] = f"t={timestamp},v1={_sign_webhook(body, timestamp)}"
+        try:
+            resp = await client.post(
+                settings.summary_webhook_url,
+                content=body,
+                headers=headers,
+                timeout=_WEBHOOK_TIMEOUT_SECONDS,
+            )
+            if resp.status_code < 300:
+                return
+            if resp.status_code not in _WEBHOOK_RETRY_STATUSES and resp.status_code < 500:
+                logger.warning(
+                    "Webhook rejected summary for %s: HTTP %d (not retrying)",
+                    record.get("session_id"), resp.status_code,
+                )
+                return
+            logger.warning(
+                "Webhook attempt %d/%d for %s failed: HTTP %d",
+                attempt, _WEBHOOK_MAX_ATTEMPTS, record.get("session_id"), resp.status_code,
+            )
+            retry_after = resp.headers.get("retry-after")
+            if retry_after:
+                try:
+                    delay = max(delay, float(retry_after))
+                except ValueError:
+                    pass
+        except Exception as e:
+            # Broad on purpose: a webhook delivery failure (network error,
+            # bad URL, whatever) must never propagate into the idle-scan
+            # loop and be mistaken for a summarization failure.
+            logger.warning(
+                "Webhook attempt %d/%d for %s failed: %s",
+                attempt, _WEBHOOK_MAX_ATTEMPTS, record.get("session_id"), e,
+            )
+        if attempt < _WEBHOOK_MAX_ATTEMPTS:
+            await asyncio.sleep(delay)
+            delay *= 2
+    logger.error(
+        "Webhook delivery permanently failed for session %s after %d attempts — "
+        "still available via GET /api/admin/session-summaries",
+        record.get("session_id"), _WEBHOOK_MAX_ATTEMPTS,
+    )
+
+
 def list_summaries(since: str | None = None) -> list[dict]:
     """All stored summaries, optionally filtered to ended_at >= since (ISO 8601)."""
     _ensure_summaries_file()
@@ -141,6 +229,7 @@ async def summarize_idle_sessions() -> int:
                 **fields,
             }
             _append_summary(record)
+            await _send_webhook(record)
             await session_store.mark_summarized(session_id)
             logger.info("Summarized idle session %s (%d messages)", session_id, data["message_count"])
         except Exception:
