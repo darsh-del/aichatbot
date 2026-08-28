@@ -109,3 +109,31 @@ def test_mark_summarized_sets_flag(monkeypatch):
 
     _run(session_store.mark_summarized("s1"))
     assert fake._data["session:s1"]["summarized"] == "true"
+
+
+# --- verified phone (real OTP login, see app/token_store.py) --------------
+
+
+def test_save_verified_phone_roundtrip(monkeypatch):
+    fake = FakeRedis({"session:s1": {"message_count": "1"}})
+    monkeypatch.setattr(session_store, "redis_client", fake)
+
+    _run(session_store.save_verified_phone("s1", "+911234567890"))
+
+    assert fake._data["session:s1"]["verified_phone"] == "+911234567890"
+    data = _run(session_store.get_session_data("s1"))
+    assert data["verified_phone"] == "+911234567890"
+
+
+def test_save_verified_phone_noop_when_redis_unconfigured(monkeypatch):
+    monkeypatch.setattr(session_store, "redis_client", None)
+    _run(session_store.save_verified_phone("s1", "+911234567890"))  # must not raise
+
+
+def test_get_session_data_verified_phone_defaults_to_none(monkeypatch):
+    fake = FakeRedis({
+        "session:s1": {"messages": "[]", "message_count": "0", "last_activity": "100.0"},
+    })
+    monkeypatch.setattr(session_store, "redis_client", fake)
+
+    assert _run(session_store.get_session_data("s1"))["verified_phone"] is None

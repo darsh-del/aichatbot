@@ -32,9 +32,15 @@ from app.retriever import retrieve
 from app.schemas import ChatMessage
 from app.attachments import resolve_attachment
 from app.flow_guard import is_protected_turn
-from app.token_store import AUTH_TOOLS, extract_token, get_token, set_token
+from app.token_store import (
+    AUTH_TOOLS, extract_token, get_token, set_token,
+    extract_phone, set_pending_phone, pop_pending_phone,
+)
 from app.tools import TOOL_SCHEMAS, dispatch_tool
-from app.session_store import save_turn, should_prompt_login, mark_login_prompted, should_nudge_for_contact
+from app.session_store import (
+    save_turn, should_prompt_login, mark_login_prompted, should_nudge_for_contact,
+    save_verified_phone,
+)
 from app.stream_sanitizer import StreamSanitizer
 
 MAX_TOOL_ITERATIONS = 8
@@ -364,8 +370,18 @@ async def _execute_tool(call, session_id: str | None) -> dict:
         if tool_name in MCP_ALLOWED_TOOLS:
             _inject_auth_token(call, session_id)
             result = await call_catalog_tool(call)
-            if tool_name == "verify_otp":
-                set_token(session_id, extract_token(result.get("result", "")))
+            if tool_name == "send_otp":
+                # Remembered only in case verify_otp succeeds — never written
+                # to the session/summary on its own, since a phone number
+                # nobody has verified proves nothing.
+                set_pending_phone(session_id, extract_phone(call.function.arguments))
+            elif tool_name == "verify_otp":
+                token = extract_token(result.get("result", ""))
+                set_token(session_id, token)
+                if token:
+                    phone = extract_phone(call.function.arguments) or pop_pending_phone(session_id)
+                    if phone:
+                        await save_verified_phone(session_id, phone)
         else:
             result = await dispatch_tool(tool_name, call.function.arguments, session_id)
         elapsed = time.perf_counter() - t0

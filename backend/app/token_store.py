@@ -57,3 +57,53 @@ def extract_token(result_text: str) -> str | None:
             if isinstance(tok, str) and tok:
                 return tok
     return None
+
+
+# --- verified phone number (real bucketlistt login, not the lead-capture form) --
+#
+# Captured from send_otp's own call arguments and only attached to the
+# session once verify_otp actually succeeds — never before, since an
+# unverified phone number typed into send_otp proves nothing (that's the
+# whole point of the OTP step; see app/llm.py _execute_tool). Same
+# single-process in-memory pattern as _store above, same TTL rationale.
+
+_pending_phone: dict[str, tuple[str, float]] = {}
+
+_PHONE_ARG_KEYS = ("phone", "phoneNumber", "phone_number", "mobile", "mobileNumber", "mobile_number", "msisdn")
+
+
+def extract_phone(args_json: str | None) -> str | None:
+    """Pull a phone number out of a send_otp/verify_otp call's arguments.
+    Key name isn't ours to control (comes from the live MCP server's tool
+    schema), so scan the common ones instead of hardcoding one.
+    """
+    import json
+
+    try:
+        args = json.loads(args_json) if args_json else {}
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(args, dict):
+        return None
+    for key in _PHONE_ARG_KEYS:
+        val = args.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return None
+
+
+def set_pending_phone(session_id: str | None, phone: str | None) -> None:
+    """Remember the phone number passed to send_otp, in case verify_otp's own
+    arguments don't repeat it."""
+    if session_id and phone:
+        _pending_phone[session_id] = (phone, time.time() + TTL_SECONDS)
+
+
+def pop_pending_phone(session_id: str | None) -> str | None:
+    if not session_id:
+        return None
+    entry = _pending_phone.pop(session_id, None)
+    if not entry:
+        return None
+    phone, expiry = entry
+    return phone if time.time() <= expiry else None
