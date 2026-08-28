@@ -78,6 +78,7 @@ def test_summarize_idle_sessions_appends_and_marks_summarized(monkeypatch, tmp_p
         "session:s1": {
             "messages": json.dumps([{"role": "user", "content": "How much is bungee jumping?"}]),
             "user_info": json.dumps({"name": "Rahul", "phone": "123", "email": ""}),
+            "verified_phone": "+911234567890",
             "message_count": "1",
             "last_activity": "1000.0",
         },
@@ -98,6 +99,7 @@ def test_summarize_idle_sessions_appends_and_marks_summarized(monkeypatch, tmp_p
     assert len(stored) == 1
     assert stored[0]["session_id"] == "s1"
     assert stored[0]["user_info"] == {"name": "Rahul", "phone": "123", "email": ""}
+    assert stored[0]["verified_phone"] == "+911234567890"
     assert stored[0]["summary"] == _FAKE_FIELDS["summary"]
     assert fake_redis._data["session:s1"]["summarized"] == "true"
 

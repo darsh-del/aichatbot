@@ -150,6 +150,24 @@ async def save_user_info(session_id: str, name: str, phone: str, email: str) -> 
         logger.error(f"Failed to save user info: {e}")
 
 
+async def save_verified_phone(session_id: str, phone: str) -> None:
+    """Store the phone number from a *completed* real bucketlistt OTP login
+    (send_otp + successful verify_otp — see app/token_store.py). Kept
+    separate from user_info (the lead-capture form) since this one carries a
+    stronger guarantee: it only exists if the user actually proved they
+    hold that phone.
+    """
+    if not redis_client or not session_id:
+        return
+    try:
+        key = f"session:{session_id}"
+        await redis_client.hset(key, "verified_phone", phone)
+        await redis_client.expire(key, settings.session_ttl_seconds)
+        logger.info(f"Saved verified phone for session {session_id}")
+    except Exception as e:
+        logger.error(f"Failed to save verified phone: {e}")
+
+
 async def find_idle_sessions(idle_seconds: int) -> list[str]:
     """Session ids idle >= idle_seconds, with at least one turn, not yet
     summarized. Used by the dashboard idle-scan loop (see app/dashboard.py)
@@ -192,6 +210,7 @@ async def get_session_data(session_id: str) -> dict[str, Any]:
         return {
             "messages": json.loads(data.get("messages", "[]")),
             "user_info": json.loads(data["user_info"]) if data.get("user_info") else None,
+            "verified_phone": data.get("verified_phone"),
             "message_count": int(data.get("message_count", 0)),
             "last_activity": float(data.get("last_activity", 0) or 0),
         }

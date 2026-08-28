@@ -226,6 +226,7 @@ async def summarize_idle_sessions() -> int:
                 "ended_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(data["last_activity"])),
                 "message_count": data["message_count"],
                 "user_info": data.get("user_info"),
+                "verified_phone": data.get("verified_phone"),
                 **fields,
             }
             _append_summary(record)

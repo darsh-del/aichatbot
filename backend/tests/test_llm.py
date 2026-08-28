@@ -212,3 +212,56 @@ def test_is_protected_turn_true_for_flow_and_safety_signals(text):
 
 def test_is_protected_turn_false_for_ordinary_catalog_question():
     assert is_protected_turn("what rafting packages do you have in Rishikesh") is False
+
+
+# --- OTP login -> verified phone capture (see app/token_store.py) --------
+#
+# The phone number is only ever attached to the session AFTER a real
+# verify_otp success — i.e. after the user themselves read an SMS code and
+# typed it back into chat. Nothing here changes how send_otp/verify_otp work;
+# this just remembers the phone number that flow already proved.
+
+import json
+from types import SimpleNamespace
+
+from app import llm as llm_module
+
+
+def _fake_call(name, args_dict):
+    return SimpleNamespace(function=SimpleNamespace(name=name, arguments=json.dumps(args_dict)))
+
+
+def test_execute_tool_saves_verified_phone_only_after_verify_otp_succeeds(monkeypatch):
+    async def fake_call_catalog_tool(call):
+        if call.function.name == "verify_otp":
+            return {"result": json.dumps({"authToken": "tok-123"})}
+        return {"result": "{}"}
+
+    saved = {}
+
+    async def fake_save_verified_phone(session_id, phone):
+        saved["session_id"] = session_id
+        saved["phone"] = phone
+
+    monkeypatch.setattr(llm_module, "call_catalog_tool", fake_call_catalog_tool)
+    monkeypatch.setattr(llm_module, "save_verified_phone", fake_save_verified_phone)
+
+    asyncio.run(llm_module._execute_tool(_fake_call("send_otp", {"phone": "+911234567890"}), "sess-otp"))
+    asyncio.run(llm_module._execute_tool(_fake_call("verify_otp", {"otp": "482913"}), "sess-otp"))
+
+    assert saved == {"session_id": "sess-otp", "phone": "+911234567890"}
+
+
+def test_execute_tool_does_not_save_phone_when_verify_otp_fails(monkeypatch):
+    async def fake_call_catalog_tool(call):
+        return {"result": json.dumps({"success": False})}  # no authToken -> not verified
+
+    async def fail_if_called(*a, **k):
+        raise AssertionError("save_verified_phone must not be called on a failed verify")
+
+    monkeypatch.setattr(llm_module, "call_catalog_tool", fake_call_catalog_tool)
+    monkeypatch.setattr(llm_module, "save_verified_phone", fail_if_called)
+
+    asyncio.run(llm_module._execute_tool(_fake_call("send_otp", {"phone": "+911234567890"}), "sess-fail"))
+    asyncio.run(llm_module._execute_tool(_fake_call("verify_otp", {"otp": "000000"}), "sess-fail"))
+    # No assertion error raised above == save_verified_phone was correctly skipped.
