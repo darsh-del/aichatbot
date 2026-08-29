@@ -21,9 +21,14 @@ def test_cache_key_handles_bad_json():
     assert cache.cache_key("fn", "not json") == cache.cache_key("fn", "not json")
 
 
-def test_get_set_noop_when_redis_unconfigured():
-    # conftest never sets REDIS_URL, so caching is disabled — get/set must be
-    # harmless no-ops, never raise, exactly like calling MCP live today.
+def test_get_set_noop_when_redis_unconfigured(monkeypatch):
+    # Ensure REDIS_URL is strictly None regardless of what .env says,
+    # so caching is disabled — get/set must be harmless no-ops.
+    monkeypatch.setattr(cache.settings, "redis_url", None)
+    # Also reset the module-level singleton state so it re-evaluates
+    monkeypatch.setattr(cache, "_client", None)
+    monkeypatch.setattr(cache, "_available", None)
+    
     async def roundtrip():
         await cache.set("mcp:test:key", "value")
         return await cache.get("mcp:test:key")

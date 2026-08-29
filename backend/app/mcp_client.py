@@ -91,18 +91,36 @@ ALLOWED_TOOLS = {
 
 
 
-# ponytail: HTTP transport reuse was attempted here (a shared httpx.AsyncClient
-# passed into streamablehttp_client's http_client= kwarg) but reverted after
-# live testing — the installed mcp SDK (1.28.1) doesn't have an http_client
-# parameter at all; it takes httpx_client_factory instead, and internally does
-# `async with client:` on whatever the factory returns, closing it at the end
-# of every single call. Passing a shared client through that factory would
-# just get it closed after the first request, breaking every call after.
-# Doing this correctly needs a wrapper client whose __aexit__ is a no-op (real
-# close deferred to app shutdown) — untested complexity, not worth adding
-# without dedicated test coverage. Upgrade path: revisit if a newer mcp SDK
-# version supports passing an already-open client directly, or add the no-op
-# wrapper with its own test once this optimization is worth the added risk.
+# Shared, keep-alive HTTP transport — reused across every MCP call so the
+# TCP/TLS handshake isn't redone per call. Each call still creates its own
+# fresh ClientSession (below) — only the transport connection is pooled,
+# never the session itself.
+# To prevent the MCP SDK from closing the shared client after a single request,
+# we wrap it in NoCloseWrapper below when passing it to httpx_client_factory.
+_http_client: httpx.AsyncClient | None = None
+
+class _NoCloseWrapper:
+    """Wraps an httpx.AsyncClient to intercept and no-op __aexit__.
+    
+    The mcp SDK (1.28.1) takes an httpx_client_factory and internally does:
+      async with factory() as client:
+    Since we want to share the client, we cannot let the SDK close it.
+    This wrapper delegates all attributes to the real client but prevents closure.
+    """
+    def __init__(self, client: httpx.AsyncClient):
+        self._client = client
+        
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+        
+    async def __aenter__(self):
+        # Return self so that methods called on the context manager (like .stream)
+        # go through __getattr__ to the real client.
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
 _http_client: httpx.AsyncClient | None = None
 
 
@@ -111,6 +129,13 @@ def _get_http_client() -> httpx.AsyncClient:
     if _http_client is None:
         _http_client = httpx.AsyncClient()
     return _http_client
+
+def _client_factory(*args, **kwargs):
+    # The mcp SDK passes headers, timeout, and auth to the factory.
+    # We are sharing a single client, so we ignore per-factory instantiation args.
+    # This is safe here because we only connect to a single fixed MCP server
+    # without dynamic auth headers per session.
+    return _NoCloseWrapper(_get_http_client())
 
 
 async def close_http_client() -> None:
@@ -128,14 +153,16 @@ async def _fresh_session():
     an async generator yield, or anyio cancel scopes will leak into Starlette's
     task groups and crash the streaming response.
 
-    A fresh TCP/TLS connection per call, same as before this file's latency
-    pass — see the ponytail comment above for why transport reuse isn't
-    actually wired in yet despite _http_client/_get_http_client existing.
+    The session itself is always freshly created per call (safe under this
+    app's parallel-tool-call fan-out); only the underlying HTTP transport
+    connection is reused, via the shared client below.
     """
     stack = AsyncExitStack()
     await stack.__aenter__()
+    
+    # We pass the no-close wrapper factory to streamablehttp_client
     read, write, _ = await stack.enter_async_context(
-        streamablehttp_client(settings.mcp_server_url)
+        streamablehttp_client(settings.mcp_server_url, httpx_client_factory=_client_factory)
     )
     session = await stack.enter_async_context(ClientSession(read, write))
     await session.initialize()
