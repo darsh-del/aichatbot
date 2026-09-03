@@ -81,7 +81,7 @@ async def test_empty_slots_hint_reports_closure_when_activity_is_closed(monkeypa
     """
     import app.mcp_client as mc
 
-    async def fake_call_catalog_tool(tool_call):
+    async def fake_call_catalog_tool(tool_call, session=None):
         return {
             "result": json.dumps({
                 "success": True,
