@@ -361,7 +361,7 @@ _TOOL_STATUS_LABELS = {
 }
 
 
-async def _execute_tool(call, session_id: str | None) -> dict:
+async def _execute_tool(call, session_id: str | None, mcp_session=None) -> dict:
     """Execute a single tool call and return the result dict."""
     tool_name = call.function.name
     t0 = time.perf_counter()
@@ -369,7 +369,7 @@ async def _execute_tool(call, session_id: str | None) -> dict:
     try:
         if tool_name in MCP_ALLOWED_TOOLS:
             _inject_auth_token(call, session_id)
-            result = await call_catalog_tool(call)
+            result = await call_catalog_tool(call, session=mcp_session)
             if tool_name == "send_otp":
                 # Remembered only in case verify_otp succeeds — never written
                 # to the session/summary on its own, since a phone number
@@ -508,27 +508,41 @@ async def _run_tool_loop(
         yield _TOOL_STATUS_LABELS.get(names[0], "Working…")
 
         has_verify = any(c.function.name == "verify_otp" for c in tool_calls)
+        needs_mcp = any(c.function.name in MCP_ALLOWED_TOOLS for c in tool_calls)
 
-        if len(tool_calls) == 1 or has_verify:
-            for call in tool_calls:
-                result = await _execute_tool(call, session_id)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "name": call.function.name,
-                    "content": json.dumps(result),
-                })
-        else:
-            results = await asyncio.gather(
-                *(_execute_tool(c, session_id) for c in tool_calls)
-            )
-            for call, result in zip(tool_calls, results):
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "name": call.function.name,
-                    "content": json.dumps(result),
-                })
+        stack = None
+        mcp_session = None
+        if needs_mcp:
+            from app.mcp_client import _fresh_session
+            stack, mcp_session = await _fresh_session()
+            
+        try:
+            if len(tool_calls) == 1 or has_verify:
+                for call in tool_calls:
+                    result = await _execute_tool(call, session_id, mcp_session=mcp_session)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "name": call.function.name,
+                        "content": json.dumps(result),
+                    })
+            else:
+                results = await asyncio.gather(
+                    *(_execute_tool(c, session_id, mcp_session=mcp_session) for c in tool_calls)
+                )
+                for call, result in zip(tool_calls, results):
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "name": call.function.name,
+                        "content": json.dumps(result),
+                    })
+        finally:
+            if stack is not None:
+                try:
+                    await stack.aclose()
+                except Exception:
+                    pass
 
         # At the end of each tool-loop iteration, after appending tool results:
         if messages and messages[-1].get("role") == "tool":

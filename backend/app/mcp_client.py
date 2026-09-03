@@ -296,7 +296,7 @@ def _compact_search(raw):
     return out
 
 
-async def _postprocess(fn: str, text: str, tool_args: dict) -> dict:
+async def _postprocess(fn: str, text: str, tool_args: dict, session=None) -> dict:
     """Slim, truncate, and add hints to a tool result."""
     raw_len = len(text)
     try:
@@ -336,7 +336,7 @@ async def _postprocess(fn: str, text: str, tool_args: dict) -> dict:
                     # Supplementary lookup to check for closure — goes through
                     # get_activity_by_id so caching/slimming apply the same as
                     # any other catalog call.
-                    act_result = await get_activity_by_id(activity_id)
+                    act_result = await get_activity_by_id(activity_id, session=session)
 
                     res_obj = json.loads(act_result.get("result") or "{}")
                     # get_activity's shape is {"success": bool, "data": {...}} —
@@ -403,7 +403,7 @@ async def _postprocess(fn: str, text: str, tool_args: dict) -> dict:
     return result
 
 
-async def get_activity_by_id(identifier: str) -> dict:
+async def get_activity_by_id(identifier: str, session=None) -> dict:
     """Fetch one activity's full (slimmed) record by id, outside the LLM tool loop.
 
     Reuses call_catalog_tool so caching/slimming/truncation all apply — this is
@@ -413,15 +413,15 @@ async def get_activity_by_id(identifier: str) -> dict:
     dummy_call = _DotDict(
         function=_DotDict(name="get_activity", arguments=json.dumps({"identifier": identifier}))
     )
-    return await call_catalog_tool(dummy_call)
+    return await call_catalog_tool(dummy_call, session=session)
 
 
-async def call_catalog_tool(tool_call) -> dict:
+async def call_catalog_tool(tool_call, session=None) -> dict:
     """Execute one whitelisted catalog tool call against the live MCP server.
 
-    Creates a fresh session per call so anyio cancel scopes are fully contained
-    and never leak into the caller's task (which would crash Starlette's
-    streaming response).
+    If session is provided, reuses the existing session. Otherwise creates a
+    fresh session per call so anyio cancel scopes are fully contained
+    and never leak into the caller's task.
     """
     fn = tool_call.function.name
     if fn == BUNGEE_SUMMARY_TOOL:
@@ -436,9 +436,15 @@ async def call_catalog_tool(tool_call) -> dict:
             return json.loads(cached)
 
     t0 = time.perf_counter()
-    stack, session = await _fresh_session()
+    if session is None:
+        stack, active_session = await _fresh_session()
+        owns_session = True
+    else:
+        active_session = session
+        owns_session = False
+
     try:
-        result = await litellm_mcp.call_openai_tool(session=session, openai_tool=tool_call)
+        result = await litellm_mcp.call_openai_tool(session=active_session, openai_tool=tool_call)
     except Exception as exc:
         logger.exception("MCP call %s failed after %.3fs", fn, time.perf_counter() - t0)
         from app.notifier import send_critical_alert
@@ -446,14 +452,15 @@ async def call_catalog_tool(tool_call) -> dict:
         asyncio.create_task(send_critical_alert("mcp_tool_error", str(exc), f"Failed to execute MCP tool: {fn}"))
         raise
     finally:
-        try:
-            await stack.aclose()
-        except Exception:
-            pass
+        if owns_session:
+            try:
+                await stack.aclose()
+            except Exception:
+                pass
     logger.info("MCP call %s completed in %.3fs", fn, time.perf_counter() - t0)
     text = "\n".join(part.text for part in result.content if hasattr(part, "text"))
     text = text or str(result)
-    postprocessed = await _postprocess(fn, text, json.loads(tool_call.function.arguments or "{}"))
+    postprocessed = await _postprocess(fn, text, json.loads(tool_call.function.arguments or "{}"), session=active_session)
 
     if cache_k:
         await mcp_cache.set(cache_k, json.dumps(postprocessed, separators=(",", ":")))
