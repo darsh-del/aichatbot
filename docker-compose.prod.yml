@@ -7,6 +7,22 @@
 # the repo moves. Images are tagged :latest by CI; pin to a :<sha> tag here to
 # roll back to a specific build.
 services:
+  clamav:
+    # Attachment malware scanning (app/attachments.py::_scan_or_raise). The
+    # virus-definition DB is large and downloads on first boot — the backend
+    # can come up before this is ready to scan; _scan_or_raise fails closed
+    # (503) rather than skip the scan during that window, so it's a startup
+    # delay for uploads, not a security gap.
+    # :latest, not a pinned version — a pinned tag (1.3) 404'd on pull in
+    # practice (see commit 1fee5ef); revisit with a real pinned tag if one
+    # becomes available; :latest trades reproducibility for "actually pulls."
+    image: clamav/clamav:latest
+    expose:
+      - "3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    restart: unless-stopped
+
   weaviate:
     image: semitechnologies/weaviate:1.27.0
     environment:
@@ -37,11 +53,14 @@ services:
     environment:
       WEAVIATE_URL: http://weaviate:8080
       REDIS_URL: redis://redis:6379/0
+      CLAMD_HOST: clamav
+      CLAMD_PORT: 3310
     expose:
       - "8000"
     depends_on:
       - weaviate
       - redis
+      - clamav
     restart: unless-stopped
 
   frontend:
@@ -73,5 +92,6 @@ services:
 
 volumes:
   weaviate_data:
+  clamav_data:
   caddy_data:
   caddy_config:
