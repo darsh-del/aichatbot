@@ -480,9 +480,13 @@ async def _run_tool_loop(
             iter_tools = all_tools
             iter_choice = "auto"
         t_llm = time.perf_counter()
+        
+        from app.cache_limiter import _enforce_cache_limits
+        safe_messages = _enforce_cache_limits(messages)
+        
         response = await litellm.acompletion(
             model=settings.llm_model,
-            messages=messages,
+            messages=safe_messages,
             tools=iter_tools,
             tool_choice=iter_choice,
             max_tokens=MAX_OUTPUT_TOKENS,
@@ -661,11 +665,18 @@ async def stream_chat_response(
         
         from app.notifier import send_critical_alert
         err_msg_lower = err_msg.lower()
+        
+        friendly_error = "I hit a snag trying to find that for you. Mind asking me again?"
+        
         if "404" in err_msg_lower or "402" in err_msg_lower or "credit" in err_msg_lower:
             asyncio.create_task(send_critical_alert("llm_credits", err_msg, "Failed to stream chat response"))
         elif "429" in err_msg_lower or "rate limit" in err_msg_lower:
             asyncio.create_task(send_critical_alert("llm_rate_limit", err_msg, "Failed to stream chat response due to rate limits"))
+            friendly_error = "You have reached the limit of your messages. Please wait a moment before trying again."
         elif "500" in err_msg_lower or "502" in err_msg_lower or "503" in err_msg_lower or "529" in err_msg_lower or "overloaded" in err_msg_lower:
             asyncio.create_task(send_critical_alert("llm_outage", err_msg, "Upstream LLM provider returned 500+ error"))
+            friendly_error = "My servers are a bit overloaded right now. Give me just a second to catch my breath and try again!"
+        elif "context length" in err_msg_lower or "maximum context length" in err_msg_lower:
+            friendly_error = "This conversation got a bit too long for me to remember everything! Try starting a New Chat to clear my head."
 
-        yield _sse({"delta": "", "done": True, "error": err_msg})
+        yield _sse({"delta": "", "done": True, "error": friendly_error})

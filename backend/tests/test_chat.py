@@ -133,4 +133,4 @@ def test_chat_stream_ends_with_done_true_on_failure(monkeypatch):
     assert response.status_code == 200
     frames = _sse_frames(response.text)
     assert len(frames) == 1
-    assert frames[0] == 'data: {"delta": "", "done": true, "error": "upstream boom"}'
+    assert frames[0] == 'data: {"delta": "", "done": true, "error": "I hit a snag trying to find that for you. Mind asking me again?"}'
