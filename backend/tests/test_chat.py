@@ -136,7 +136,7 @@ def test_chat_never_sends_the_raw_activity_id_even_inside_a_real_link(monkeypatc
     # unit): the SSE body the client receives must not contain the raw Mongo
     # ObjectId anywhere - not as visible text, not inside the activity: link
     # href either, where opening the browser's Inspect panel would reveal it.
-    from app.activity_ref import obfuscate_activity_id
+    from app.activity_ref import get_or_create_ref
 
     monkeypatch.setattr("app.llm.litellm.acompletion", _fake_acompletion_with_activity_link)
     monkeypatch.setattr("app.mcp_client.settings", type("S", (), {"mcp_server_url": ""})())
@@ -148,7 +148,7 @@ def test_chat_never_sends_the_raw_activity_id_even_inside_a_real_link(monkeypatc
 
     assert response.status_code == 200
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in response.text
-    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
     assert f"activity:{token}" in response.text
 
 
@@ -156,7 +156,7 @@ def test_chat_final_html_field_has_the_token_not_the_raw_id(monkeypatch):
     # The html field (for API consumers that don't render markdown themselves)
     # is built from the SAME sanitized/tokenized text as the delta stream - it
     # must not become a second place the raw id sneaks out through.
-    from app.activity_ref import obfuscate_activity_id
+    from app.activity_ref import get_or_create_ref
 
     monkeypatch.setattr("app.llm.litellm.acompletion", _fake_acompletion_with_activity_link)
     monkeypatch.setattr("app.mcp_client.settings", type("S", (), {"mcp_server_url": ""})())
@@ -168,7 +168,7 @@ def test_chat_final_html_field_has_the_token_not_the_raw_id(monkeypatch):
 
     done_frame = _sse_frames(response.text)[-1]
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in done_frame
-    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
     assert f'<a href=\\"activity:{token}\\">Jumpin Heights</a>' in done_frame
 
 

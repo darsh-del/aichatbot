@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 
 import json
 
-from app.activity_ref import deobfuscate_activity_id
+from app.activity_ref import resolve_ref
 from app.config import settings
 from app.dashboard import get_summary, idle_scan_loop, list_summaries
 from app.llm import stream_chat_response
@@ -108,14 +108,14 @@ async def get_activity(activity_id: str) -> dict:
     the chat tool loop uses), outside the LLM, so a card click doesn't cost a
     model round-trip.
 
-    `activity_id` here is the opaque token from the `activity:<token>` link
-    (see app/stream_sanitizer.py / app/activity_ref.py) - never the raw Mongo
-    `_id` itself, which never reaches the browser. Deobfuscate it back to the
+    `activity_id` here is the small reference number from the `activity:<ref>`
+    link (see app/stream_sanitizer.py / app/activity_ref.py) - never the raw
+    Mongo `_id` itself, which never reaches the browser. Resolve it back to the
     real id before asking the catalog for anything.
     """
     if not settings.mcp_server_url:
         raise HTTPException(503, "Catalog not configured (set MCP_SERVER_URL)")
-    real_id = deobfuscate_activity_id(activity_id)
+    real_id = resolve_ref(activity_id)
     if real_id is None:
         raise HTTPException(404, "Activity not found")
     logger.info("GET /api/activity/%s", activity_id)

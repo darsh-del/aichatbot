@@ -102,7 +102,7 @@ def test_tool_loop_includes_bungee_summary_for_bungee_query(monkeypatch):
 
 # --- StreamSanitizer (dash/activity-ID streaming backstop, §1.2/§2.2) -----
 
-from app.activity_ref import obfuscate_activity_id
+from app.activity_ref import get_or_create_ref
 from app.stream_sanitizer import StreamSanitizer
 
 
@@ -164,7 +164,7 @@ def test_sanitizer_tokenizes_id_inside_activity_link():
         s.flush(),
     ])
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
-    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
     assert f"activity:{token}" in out
 
 
@@ -186,7 +186,7 @@ def test_sanitizer_tokenizes_upper_case_id_inside_a_real_link():
     s = StreamSanitizer()
     out = s.feed("[Jumpin Heights](activity:69B90FEFB32379387CBAAC66)") + s.flush()
     assert "69B90FEFB32379387CBAAC66" not in out
-    token = obfuscate_activity_id("69B90FEFB32379387CBAAC66")
+    token = get_or_create_ref("69B90FEFB32379387CBAAC66")
     assert f"activity:{token}" in out
 
 
@@ -225,7 +225,7 @@ def test_sanitizer_tokenizes_id_split_across_chunks_even_with_link_prefix_nearby
         s.flush(),
     ])
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
-    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
     assert f"activity:{token}" in out
 
 
@@ -235,7 +235,7 @@ def test_sanitizer_correct_character_by_character_worst_case_chunking():
     s = StreamSanitizer()
     link_text = "[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) is great"
     out = "".join(s.feed(ch) for ch in link_text) + s.flush()
-    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
     assert out == f"[Jumpin Heights](activity:{token}) is great"
 
     s2 = StreamSanitizer()
@@ -262,7 +262,7 @@ def test_sanitizer_tokenizes_multiple_real_links_in_one_message():
     text = f"| [A](activity:{id_a}) | [B](activity:{id_b}) |"
     out = s.feed(text) + s.flush()
     assert id_a not in out and id_b not in out
-    token_a, token_b = obfuscate_activity_id(id_a), obfuscate_activity_id(id_b)
+    token_a, token_b = get_or_create_ref(id_a), get_or_create_ref(id_b)
     assert out == f"| [A](activity:{token_a}) | [B](activity:{token_b}) |"
 
 
@@ -298,7 +298,7 @@ def test_sanitizer_tokenizes_real_link_glued_to_devanagari_script():
     s = StreamSanitizer()
     out = s.feed("[जंपिन हाइट्स](activity:66f1a2b3c4d5e6f7a8b9c0d1)देखें") + s.flush()
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
-    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
     assert f"activity:{token}" in out
     assert "देखें" in out
 
@@ -325,7 +325,7 @@ def test_sanitizer_does_not_leak_id_duplicated_as_the_link_text():
     s = StreamSanitizer()
     out = s.feed("[66f1a2b3c4d5e6f7a8b9c0d1](activity:66f1a2b3c4d5e6f7a8b9c0d1)") + s.flush()
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
-    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
     assert f"activity:{token}" in out
 
 
@@ -341,7 +341,7 @@ def test_sanitizer_correct_at_every_chunk_size(chunk_size):
         f"[Splash Bungy](activity:{id_b}) — 20–130 kg range. "
         f"Someone mentioned activity:{id_c} in passing, ignore that."
     )
-    token_a, token_b = obfuscate_activity_id(id_a), obfuscate_activity_id(id_b)
+    token_a, token_b = get_or_create_ref(id_a), get_or_create_ref(id_b)
     expected = (
         f"Compare [Jumpin Heights](activity:{token_a}) and "
         f"[Splash Bungy](activity:{token_b}) , 20-130 kg range. "

@@ -19,13 +19,14 @@ Three jobs, one buffer, because they all need the same fix for the same reason:
      ever recognizes that exact lowercase href, so any other casing of the prefix -
      `](ACTIVITY:`, `](Activity:` - could never have been a working link either way
      and is correctly stripped like any other non-link occurrence.
-  3. Replace the id of a real, kept `[Name](activity:<id>)` link with its opaque
-     token (app/activity_ref.py) so the raw Mongo ObjectId never reaches the browser
-     at all — not as visible text (job 2's problem) and not sitting in the link's
-     href either, where anyone opening the browser's Inspect panel could read it
-     even though it never rendered as text. The LLM keeps using the real id for its
-     OWN tool calls (get_time_slots, get_activity_addons, add_to_cart, ...) — none of
-     that reaches the client — only the copy about to go out over SSE gets swapped.
+  3. Replace the id of a real, kept `[Name](activity:<id>)` link with a small
+     reference number (app/activity_ref.py) so the raw Mongo ObjectId never
+     reaches the browser at all — not as visible text (job 2's problem) and not
+     sitting in the link's href either, where anyone opening the browser's Inspect
+     panel could read it even though it never rendered as text. The LLM keeps
+     using the real id for its OWN tool calls (get_time_slots, get_activity_addons,
+     add_to_cart, ...) — none of that reaches the client — only the copy about to
+     go out over SSE gets swapped.
 
 Jobs 2 and 3 need a tail buffer: `delta.content` arrives from the provider stream in
 small, arbitrary-sized pieces, so a 24-char ObjectId routinely lands split across two
@@ -43,7 +44,7 @@ the model itself "said" in the conversation it continues to reason over.
 import logging
 import re
 
-from app.activity_ref import obfuscate_activity_id
+from app.activity_ref import get_or_create_ref
 
 logger = logging.getLogger(__name__)
 
@@ -84,18 +85,18 @@ _RAW_OBJECTID_RE = re.compile(
 # The mirror image: an id that IS a real, kept link (the exact "](activity:" prefix
 # is a fixed literal ending in ":", itself non-alnum, so no separate left-side
 # not-glued check is needed - the exact-prefix match already guarantees it). Swapped
-# for its token by _tokenize() rather than left in place - see job 3 above.
+# for its reference number by _tokenize() rather than left in place - see job 3 above.
 _KEPT_ID_RE = re.compile(rf"(?<=\]\(activity:)[a-fA-F0-9]{{24}}(?!{_NOT_ALNUM})")
 
 
 def _tokenize(match: re.Match) -> str:
     try:
-        return obfuscate_activity_id(match.group(0))
+        return get_or_create_ref(match.group(0))
     except ValueError:
         # Regex guarantees 24 hex chars, so this shouldn't happen - but a stream
         # sanitizer must never crash the response over this. Fall back to simply
         # not leaking the raw id, same as the unprotected case.
-        logger.warning("StreamSanitizer could not tokenize an activity id; stripping it")
+        logger.warning("StreamSanitizer could not assign an activity id reference; stripping it")
         return ""
 
 

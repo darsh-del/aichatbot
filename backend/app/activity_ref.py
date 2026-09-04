@@ -1,52 +1,75 @@
-"""Reversible obfuscation for catalog activity ids shown to the browser.
+"""Small reference numbers standing in for catalog activity ids, so the raw
+Mongo `_id` never has to reach the browser — not in the chat text, and not in
+the `activity:<ref>` link's href either, where opening the browser's Inspect
+panel could otherwise read it.
 
-The LLM still sees and uses the real Mongo `_id` for its own tool calls
-(get_time_slots, get_activity_addons, add_to_cart, ...) — none of that ever
-reaches the browser, so there's nothing to hide there. The only place a real
-id would otherwise reach the client is the `[Name](activity:<_id>)` link's
-href, which the "more details" card round-trips back to the server via
-GET /api/activity/{id} (see app/main.py). StreamSanitizer swaps the real id
-for its token right before that link goes out over SSE (see
-_replace_kept_id in app/stream_sanitizer.py); this module does the swap in
-both directions.
+Why any reference is needed at all: the "more details" card (see
+ActivityModal.tsx) works by the browser asking the server for one specific
+activity after the user clicks it (GET /api/activity/{ref} in app/main.py).
+For that round trip to work, SOME value identifying "which activity" has to
+travel from the server to the browser and back — there's no way around a
+client needing data to make its next request. What this module controls is
+*what that value looks like*: a small opaque counter ("1", "2", "17", ...)
+that carries no information about the real id, instead of the real 24-char
+Mongo ObjectId itself.
 
-Deterministic and stateless on purpose — no store, no TTL, no Redis
-dependency to keep in sync: the same id always obfuscates to the same
-token, and the token always recovers the same id, with the live catalog
-(app/mcp_client.py) as the only source of truth either way. This is about
-keeping the raw database id *shape* out of the DOM/Inspect, not encryption —
-the activity/product an id points to is already public on bucketlistt.com's
-own pages, so there's no sensitive data being protected here, just hygiene.
+Deliberately NOT encryption/encoding of the real id (an earlier version of
+this file did that with XOR + base32) — just a plain lookup table, in both
+directions, kept in memory:
+  - id -> ref, so the same activity mentioned again (same turn, later turn,
+    or a different user) reuses its existing ref instead of minting a new one
+    every time.
+  - ref -> id, to resolve a click back to the real id.
+
+The LLM itself still sees and uses the real `_id` for its own tool calls
+(get_time_slots, get_activity_addons, add_to_cart, ...) - none of that ever
+reaches the browser, so there's nothing to hide there; only the copy that's
+about to go out over SSE gets swapped (see app/stream_sanitizer.py).
+
+ponytail: in-memory only, not Redis-backed - this backend runs as one process
+(see backend/Dockerfile's plain `uvicorn`, no --workers), so a single shared
+dict is enough for every request to see the same mapping, and the catalog
+(a few hundred activities) makes this a non-issue memory-wise. It resets on
+a redeploy: a "more details" link shown just before a restart would 404 until
+the user asks again - a rare, low-severity cosmetic gap, not data loss (the
+underlying activity is untouched; only the click-through number is stale).
+Upgrade path if that ever matters: back the two dicts with Redis (already
+used elsewhere in this app - see app/cache.py) instead of plain dicts.
 """
-import base64
-import binascii
-import hashlib
+import re
 
-from app.config import settings
+_HEX24_RE = re.compile(r"^[a-fA-F0-9]{24}$")
 
-_ID_BYTES = 12  # a Mongo ObjectId is 12 raw bytes (24 hex chars)
-
-
-def _keystream() -> bytes:
-    return hashlib.sha256(settings.activity_id_key.encode()).digest()[:_ID_BYTES]
+_id_to_ref: dict[str, str] = {}
+_ref_to_id: dict[str, str] = {}
+_next_ref = 1
 
 
-def obfuscate_activity_id(hex_id: str) -> str:
-    """24-hex-char id -> opaque token. Raises ValueError if hex_id isn't one."""
-    raw = bytes.fromhex(hex_id)
-    if len(raw) != _ID_BYTES:
-        raise ValueError(f"not a {_ID_BYTES}-byte id: {hex_id!r}")
-    xored = bytes(b ^ k for b, k in zip(raw, _keystream()))
-    return base64.b32encode(xored).decode("ascii").rstrip("=").lower()
+def get_or_create_ref(real_id: str) -> str:
+    """Real Mongo `_id` -> its reference number, minting a new one on first sight.
+
+    Raises ValueError if real_id doesn't look like a Mongo ObjectId at all -
+    better to fail loudly than hand out a reference for garbage input.
+    """
+    global _next_ref
+    if not _HEX24_RE.match(real_id):
+        raise ValueError(f"not a 24-hex-char id: {real_id!r}")
+    # Lower-cased before use as the dict key: a hex ObjectId is valid in either
+    # case (the model has been seen emitting both for the same activity), and
+    # the catalog's own ids are always lower-case anyway - without this, the
+    # same activity referenced once in each case would mint two different
+    # reference numbers for what a click on either one still correctly
+    # resolves to the same record, just a wasted, confusing extra ref.
+    real_id = real_id.lower()
+    ref = _id_to_ref.get(real_id)
+    if ref is None:
+        ref = str(_next_ref)
+        _next_ref += 1
+        _id_to_ref[real_id] = ref
+        _ref_to_id[ref] = real_id
+    return ref
 
 
-def deobfuscate_activity_id(token: str) -> str | None:
-    """Opaque token -> the original 24-hex-char id, or None if token is invalid."""
-    try:
-        padded = token.upper() + "=" * (-len(token) % 8)
-        xored = base64.b32decode(padded)
-    except (ValueError, binascii.Error):
-        return None
-    if len(xored) != _ID_BYTES:
-        return None
-    return bytes(b ^ k for b, k in zip(xored, _keystream())).hex()
+def resolve_ref(ref: str) -> str | None:
+    """Reference number -> the real Mongo `_id`, or None if it's not one we handed out."""
+    return _ref_to_id.get(ref)
