@@ -162,6 +162,34 @@ def test_sanitizer_preserves_id_inside_activity_link():
     assert "activity:66f1a2b3c4d5e6f7a8b9c0d1" in out
 
 
+def test_sanitizer_strips_upper_case_id_written_as_bare_prose():
+    # Live bug report: the model emitted "(ACTIVITY:69B90FEFB32379387CBAAC66)" as
+    # bare prose (not a real link) — the old [a-f0-9]-only pattern is case-sensitive
+    # and never matches upper-case hex, so it sailed straight through unstripped.
+    s = StreamSanitizer()
+    out = s.feed("Plain River Rafting\n(ACTIVITY:69B90FEFB32379387CBAAC66)\n\nIncludes") + s.flush()
+    assert "69B90FEFB32379387CBAAC66" not in out
+    assert "Plain River Rafting" in out and "Includes" in out
+
+
+def test_sanitizer_preserves_upper_case_id_inside_a_real_link():
+    # A real link's id can still be upper-case hex (valid either way) - only the
+    # `](activity:` prefix casing matters, since that's the exact string the
+    # frontend's ACTIVITY_LINK_PREFIX check recognizes (case-sensitive).
+    s = StreamSanitizer()
+    out = s.feed("[Jumpin Heights](activity:69B90FEFB32379387CBAAC66)") + s.flush()
+    assert "activity:69B90FEFB32379387CBAAC66" in out
+
+
+def test_sanitizer_strips_id_when_the_link_prefix_itself_is_wrong_case():
+    # "[Name](ACTIVITY:id)" isn't a href the frontend recognizes either (its check
+    # is case-sensitive on the lowercase prefix) - so it was never a working link,
+    # and the backstop should strip the id rather than let it show as dead/plain text.
+    s = StreamSanitizer()
+    out = s.feed("[Jumpin Heights](ACTIVITY:69b90fefb32379387cbaac66)") + s.flush()
+    assert "69b90fefb32379387cbaac66" not in out
+
+
 def test_sanitizer_strips_id_written_as_bare_prose_not_a_real_link():
     # Regression: the model sometimes references an activity id in loose prose
     # ("see activity:<id> for more") instead of the mandated [Name](activity:<id>)

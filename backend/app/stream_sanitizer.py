@@ -10,6 +10,16 @@ Two jobs, one buffer, because both need the same fix for the same reason:
      link syntax either way, so it wouldn't render as a link — only the earlier,
      looser check let it through unstripped, which is what leaked the raw id to users.
 
+     The id itself is matched case-insensitively (`[a-fA-F0-9]`): a hex ObjectId is
+     valid in either case, and the model has been observed emitting one in upper case
+     — e.g. "(ACTIVITY:69B90FEFB32379387CBAAC66)" as bare prose, not a real link. That
+     wouldn't match a lowercase-only pattern and would leak straight through. The
+     link-open prefix stays an exact-case match on `](activity:` though: the frontend
+     (frontend/src/components/MessageContent.tsx's `ACTIVITY_LINK_PREFIX` check) only
+     ever recognizes that exact lowercase href, so any other casing of the prefix -
+     `](ACTIVITY:`, `](Activity:` - could never have been a working link either way
+     and is correctly stripped like any other non-link occurrence.
+
 Job 2 needs a tail buffer: `delta.content` arrives from the provider stream in small,
 arbitrary-sized pieces, so a 24-char ObjectId routinely lands split across two or more
 chunks. A per-chunk regex would simply never see the whole token to match against.
@@ -35,11 +45,13 @@ logger = logging.getLogger(__name__)
 # markdown tables rely on (see the comparison-table `|---|---|` syntax).
 _DASH_MAP = str.maketrans({"—": ",", "–": "-"})
 _LINK_OPEN = "](activity:"  # the actual markdown link-open syntax, not just the bare word
-_RAW_OBJECTID_RE = re.compile(r"(?<!\]\(activity:)\b[a-f0-9]{24}\b")
+# Hex chars matched case-insensitively (a valid ObjectId in either case); the
+# link-open prefix is deliberately exact-case - see the module docstring.
+_RAW_OBJECTID_RE = re.compile(r"(?<!\]\(activity:)\b[a-fA-F0-9]{24}\b")
 # Same 24-hex shape, but with no lookbehind: used only to find ids that SURVIVED the
 # strip above (i.e. legitimate, kept ones) so feed() can avoid ever slicing between
 # such an id and its `](activity:` prefix - see the comment in feed() below.
-_ANY_HEX24_RE = re.compile(r"\b[a-f0-9]{24}\b")
+_ANY_HEX24_RE = re.compile(r"\b[a-fA-F0-9]{24}\b")
 
 
 class StreamSanitizer:
