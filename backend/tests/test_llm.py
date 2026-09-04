@@ -141,8 +141,9 @@ def test_sanitizer_strips_object_id_even_when_split_across_chunks():
 
 def test_sanitizer_releases_output_progressively_once_past_the_tail_window():
     # Backs up the claim in test_chat.py's updated SSE-sequence test: the
-    # 24-char hold-back only delays short replies until flush() — anything
-    # longer streams incrementally well before the response ends.
+    # tail hold-back (StreamSanitizer._TAIL) only delays short replies until
+    # flush() — anything longer streams incrementally well before the
+    # response ends.
     s = StreamSanitizer()
     released_before_flush = ""
     for word in ["This ", "is ", "a ", "longer ", "reply ", "well ", "past ", "the ", "buffer ", "window."]:
@@ -159,6 +160,122 @@ def test_sanitizer_preserves_id_inside_activity_link():
         s.flush(),
     ])
     assert "activity:66f1a2b3c4d5e6f7a8b9c0d1" in out
+
+
+def test_sanitizer_strips_id_written_as_bare_prose_not_a_real_link():
+    # Regression: the model sometimes references an activity id in loose prose
+    # ("see activity:<id> for more") instead of the mandated [Name](activity:<id>)
+    # link. That's not real markdown link syntax so it never rendered as a link -
+    # a looser lookbehind used to treat the bare word "activity:" as proof of a
+    # real link and let the raw id through unstripped, leaking it to the user.
+    s = StreamSanitizer()
+    out = "".join([
+        s.feed("see activity:66f1a2b3c4d5e6f7a8b9c0d1 for more"),
+        s.flush(),
+    ])
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+
+
+def test_sanitizer_strips_id_split_across_chunks_even_with_link_prefix_nearby():
+    # The link-open prefix and the id can each land in their own chunk. The tail
+    # buffer must hold enough of both together for the lookbehind to still see
+    # the real link syntax once the id completes.
+    s = StreamSanitizer()
+    out = "".join([
+        s.feed("[Jumpin Heights]("),
+        s.feed("activity:66f1a2b3"),
+        s.feed("c4d5e6f7a8b9c0d1)"),
+        s.flush(),
+    ])
+    assert "activity:66f1a2b3c4d5e6f7a8b9c0d1" in out
+
+
+def test_sanitizer_strips_id_character_by_character_worst_case_chunking():
+    # Worst-case provider chunking: one character per delta. Exercises both the
+    # link-preserving path and the bare-prose-stripping path under maximum splitting.
+    s = StreamSanitizer()
+    link_text = "[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) is great"
+    out = "".join(s.feed(ch) for ch in link_text) + s.flush()
+    assert out == link_text
+
+    s2 = StreamSanitizer()
+    prose = "see activity:66f1a2b3c4d5e6f7a8b9c0d1 for more"
+    out2 = "".join(s2.feed(ch) for ch in prose) + s2.flush()
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out2
+
+
+def test_sanitizer_strips_multiple_raw_ids_in_one_message():
+    s = StreamSanitizer()
+    text = (
+        "Options: 66f1a2b3c4d5e6f7a8b9c0d1 and 77a2b3c4d5e6f7a8b9c0d1e2, "
+        "pick one."
+    )
+    out = s.feed(text) + s.flush()
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+    assert "77a2b3c4d5e6f7a8b9c0d1e2" not in out
+    assert "Options:" in out and "pick one." in out
+
+
+def test_sanitizer_preserves_multiple_real_links_in_one_message():
+    s = StreamSanitizer()
+    text = (
+        "| [A](activity:66f1a2b3c4d5e6f7a8b9c0d1) | [B](activity:77a2b3c4d5e6f7a8b9c0d1e2) |"
+    )
+    out = s.feed(text) + s.flush()
+    assert out == text
+
+
+def test_sanitizer_dash_mapping_unaffected_by_id_stripping():
+    # The two jobs share one buffer/regex pass — make sure fixing job 2 (id
+    # stripping) didn't disturb job 1 (dash mapping) running alongside it.
+    s = StreamSanitizer()
+    out = s.feed("20–130 kg — right next to 66f1a2b3c4d5e6f7a8b9c0d1 raw") + s.flush()
+    assert "20-130 kg , right next to" in out
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+    assert "—" not in out and "–" not in out
+
+
+def test_sanitizer_empty_flush_is_harmless():
+    s = StreamSanitizer()
+    assert s.flush() == ""
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 3, 5, 7, 11, 16, 40, 1000])
+def test_sanitizer_correct_at_every_chunk_size(chunk_size):
+    # Real providers chunk unpredictably. Re-run the same realistic mixed reply
+    # (two real links, a stray bare-prose id, an em dash and an en dash) sliced
+    # into every chunk size from pathological (1 char) to a single chunk, and
+    # assert the identical, fully-correct output every time.
+    reply = (
+        "Compare [Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) and "
+        "[Splash Bungy](activity:77a2b3c4d5e6f7a8b9c0d1e2) — 20–130 kg range. "
+        "Someone mentioned activity:88b3c4d5e6f7a8b9c0d1e2f3 in passing, ignore that."
+    )
+    expected = (
+        "Compare [Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) and "
+        "[Splash Bungy](activity:77a2b3c4d5e6f7a8b9c0d1e2) , 20-130 kg range. "
+        "Someone mentioned activity: in passing, ignore that."
+    )
+    s = StreamSanitizer()
+    chunks = [reply[i : i + chunk_size] for i in range(0, len(reply), chunk_size)]
+    out = "".join(s.feed(c) for c in chunks) + s.flush()
+    assert out == expected
+
+
+def test_sanitizer_logs_warning_when_raw_id_is_stripped(caplog):
+    s = StreamSanitizer()
+    with caplog.at_level("WARNING", logger="app.stream_sanitizer"):
+        s.feed("raw id 66f1a2b3c4d5e6f7a8b9c0d1 here")
+        s.flush()
+    assert any("stripped 1 raw activity id" in r.message for r in caplog.records)
+
+
+def test_sanitizer_does_not_log_for_clean_output(caplog):
+    s = StreamSanitizer()
+    with caplog.at_level("WARNING", logger="app.stream_sanitizer"):
+        s.feed("[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) — nice pick")
+        s.flush()
+    assert caplog.records == []
 
 
 # --- _latest_user_message / _wants_catalog (§3.3 tool-choice gate) --------
