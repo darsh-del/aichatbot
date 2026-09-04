@@ -102,6 +102,7 @@ def test_tool_loop_includes_bungee_summary_for_bungee_query(monkeypatch):
 
 # --- StreamSanitizer (dash/activity-ID streaming backstop, §1.2/§2.2) -----
 
+from app.activity_ref import obfuscate_activity_id
 from app.stream_sanitizer import StreamSanitizer
 
 
@@ -153,13 +154,18 @@ def test_sanitizer_releases_output_progressively_once_past_the_tail_window():
     assert full == "This is a longer reply well past the buffer window."
 
 
-def test_sanitizer_preserves_id_inside_activity_link():
+def test_sanitizer_tokenizes_id_inside_activity_link():
+    # A real link's id is never left in place - it's swapped for its opaque
+    # token so the raw Mongo ObjectId never reaches the browser at all, not
+    # even inside the href (see app/activity_ref.py).
     s = StreamSanitizer()
     out = "".join([
         s.feed("[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1)"),
         s.flush(),
     ])
-    assert "activity:66f1a2b3c4d5e6f7a8b9c0d1" in out
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    assert f"activity:{token}" in out
 
 
 def test_sanitizer_strips_upper_case_id_written_as_bare_prose():
@@ -172,13 +178,16 @@ def test_sanitizer_strips_upper_case_id_written_as_bare_prose():
     assert "Plain River Rafting" in out and "Includes" in out
 
 
-def test_sanitizer_preserves_upper_case_id_inside_a_real_link():
+def test_sanitizer_tokenizes_upper_case_id_inside_a_real_link():
     # A real link's id can still be upper-case hex (valid either way) - only the
     # `](activity:` prefix casing matters, since that's the exact string the
-    # frontend's ACTIVITY_LINK_PREFIX check recognizes (case-sensitive).
+    # frontend's ACTIVITY_LINK_PREFIX check recognizes (case-sensitive). Either
+    # way, the id itself still gets swapped for its token, not left as-is.
     s = StreamSanitizer()
     out = s.feed("[Jumpin Heights](activity:69B90FEFB32379387CBAAC66)") + s.flush()
-    assert "activity:69B90FEFB32379387CBAAC66" in out
+    assert "69B90FEFB32379387CBAAC66" not in out
+    token = obfuscate_activity_id("69B90FEFB32379387CBAAC66")
+    assert f"activity:{token}" in out
 
 
 def test_sanitizer_strips_id_when_the_link_prefix_itself_is_wrong_case():
@@ -204,7 +213,7 @@ def test_sanitizer_strips_id_written_as_bare_prose_not_a_real_link():
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
 
 
-def test_sanitizer_strips_id_split_across_chunks_even_with_link_prefix_nearby():
+def test_sanitizer_tokenizes_id_split_across_chunks_even_with_link_prefix_nearby():
     # The link-open prefix and the id can each land in their own chunk. The tail
     # buffer must hold enough of both together for the lookbehind to still see
     # the real link syntax once the id completes.
@@ -215,16 +224,19 @@ def test_sanitizer_strips_id_split_across_chunks_even_with_link_prefix_nearby():
         s.feed("c4d5e6f7a8b9c0d1)"),
         s.flush(),
     ])
-    assert "activity:66f1a2b3c4d5e6f7a8b9c0d1" in out
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    assert f"activity:{token}" in out
 
 
-def test_sanitizer_strips_id_character_by_character_worst_case_chunking():
+def test_sanitizer_correct_character_by_character_worst_case_chunking():
     # Worst-case provider chunking: one character per delta. Exercises both the
-    # link-preserving path and the bare-prose-stripping path under maximum splitting.
+    # link-tokenizing path and the bare-prose-stripping path under maximum splitting.
     s = StreamSanitizer()
     link_text = "[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) is great"
     out = "".join(s.feed(ch) for ch in link_text) + s.flush()
-    assert out == link_text
+    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    assert out == f"[Jumpin Heights](activity:{token}) is great"
 
     s2 = StreamSanitizer()
     prose = "see activity:66f1a2b3c4d5e6f7a8b9c0d1 for more"
@@ -244,13 +256,14 @@ def test_sanitizer_strips_multiple_raw_ids_in_one_message():
     assert "Options:" in out and "pick one." in out
 
 
-def test_sanitizer_preserves_multiple_real_links_in_one_message():
+def test_sanitizer_tokenizes_multiple_real_links_in_one_message():
     s = StreamSanitizer()
-    text = (
-        "| [A](activity:66f1a2b3c4d5e6f7a8b9c0d1) | [B](activity:77a2b3c4d5e6f7a8b9c0d1e2) |"
-    )
+    id_a, id_b = "66f1a2b3c4d5e6f7a8b9c0d1", "77a2b3c4d5e6f7a8b9c0d1e2"
+    text = f"| [A](activity:{id_a}) | [B](activity:{id_b}) |"
     out = s.feed(text) + s.flush()
-    assert out == text
+    assert id_a not in out and id_b not in out
+    token_a, token_b = obfuscate_activity_id(id_a), obfuscate_activity_id(id_b)
+    assert out == f"| [A](activity:{token_a}) | [B](activity:{token_b}) |"
 
 
 def test_sanitizer_dash_mapping_unaffected_by_id_stripping():
@@ -281,10 +294,12 @@ def test_sanitizer_strips_id_glued_to_devanagari_script_with_no_space():
     assert "अधिक जानकारी के लिए" in out and "देखें" in out
 
 
-def test_sanitizer_preserves_real_link_glued_to_devanagari_script():
+def test_sanitizer_tokenizes_real_link_glued_to_devanagari_script():
     s = StreamSanitizer()
     out = s.feed("[जंपिन हाइट्स](activity:66f1a2b3c4d5e6f7a8b9c0d1)देखें") + s.flush()
-    assert "activity:66f1a2b3c4d5e6f7a8b9c0d1" in out
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    assert f"activity:{token}" in out
     assert "देखें" in out
 
 
@@ -305,12 +320,13 @@ def test_sanitizer_strips_id_when_prefix_has_a_stray_space_not_real_link_syntax(
 
 def test_sanitizer_does_not_leak_id_duplicated_as_the_link_text():
     # "[<id>](activity:<id>)" - a model mistake putting the id in the visible link
-    # text too. The href copy is preserved (real link), the visible-text copy must
-    # still be stripped so the id never appears as plain reader-visible text.
+    # text too. The visible-text copy is stripped (not a real link there), and the
+    # href copy is tokenized - so the raw id shouldn't appear anywhere in the output.
     s = StreamSanitizer()
     out = s.feed("[66f1a2b3c4d5e6f7a8b9c0d1](activity:66f1a2b3c4d5e6f7a8b9c0d1)") + s.flush()
-    assert out.count("66f1a2b3c4d5e6f7a8b9c0d1") == 1
-    assert "activity:66f1a2b3c4d5e6f7a8b9c0d1" in out
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    assert f"activity:{token}" in out
 
 
 @pytest.mark.parametrize("chunk_size", [1, 2, 3, 5, 7, 11, 16, 40, 1000])
@@ -319,20 +335,23 @@ def test_sanitizer_correct_at_every_chunk_size(chunk_size):
     # (two real links, a stray bare-prose id, an em dash and an en dash) sliced
     # into every chunk size from pathological (1 char) to a single chunk, and
     # assert the identical, fully-correct output every time.
+    id_a, id_b, id_c = "66f1a2b3c4d5e6f7a8b9c0d1", "77a2b3c4d5e6f7a8b9c0d1e2", "88b3c4d5e6f7a8b9c0d1e2f3"
     reply = (
-        "Compare [Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) and "
-        "[Splash Bungy](activity:77a2b3c4d5e6f7a8b9c0d1e2) — 20–130 kg range. "
-        "Someone mentioned activity:88b3c4d5e6f7a8b9c0d1e2f3 in passing, ignore that."
+        f"Compare [Jumpin Heights](activity:{id_a}) and "
+        f"[Splash Bungy](activity:{id_b}) — 20–130 kg range. "
+        f"Someone mentioned activity:{id_c} in passing, ignore that."
     )
+    token_a, token_b = obfuscate_activity_id(id_a), obfuscate_activity_id(id_b)
     expected = (
-        "Compare [Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) and "
-        "[Splash Bungy](activity:77a2b3c4d5e6f7a8b9c0d1e2) , 20-130 kg range. "
+        f"Compare [Jumpin Heights](activity:{token_a}) and "
+        f"[Splash Bungy](activity:{token_b}) , 20-130 kg range. "
         "Someone mentioned activity: in passing, ignore that."
     )
     s = StreamSanitizer()
     chunks = [reply[i : i + chunk_size] for i in range(0, len(reply), chunk_size)]
     out = "".join(s.feed(c) for c in chunks) + s.flush()
     assert out == expected
+    assert id_a not in out and id_b not in out and id_c not in out
 
 
 def test_sanitizer_logs_warning_when_raw_id_is_stripped(caplog):

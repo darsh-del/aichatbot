@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     weaviate_api_key: str = ""
     # bucketlistt MCP server — read-only catalog tools only, see app/mcp_client.py
     mcp_server_url: str = ""
+    # Key for obfuscating catalog activity ids before they ever reach the browser
+    # (chat text or the activity: link href) — see app/activity_ref.py. Not a secret
+    # in the "protects sensitive data" sense (the underlying activity is already
+    # public on bucketlistt.com's own pages) — just keeps the raw Mongo ObjectId
+    # shape out of the DOM/Inspect. Override in production so tokens aren't
+    # guessable from this file, though nothing breaks if you don't.
+    activity_id_key: str = "bucky-dev-default-key-change-me"
     # Redis — MCP result cache (app/cache.py) and chat session store /
     # login-prompt trigger (app/session_store.py). Optional; both features
     # no-op if unset or unreachable.

@@ -117,6 +117,41 @@ def test_chat_streams_expected_sse_frame_sequence(monkeypatch):
     ]
 
 
+# --- end-to-end: activity ids never reach the client, in a real link either ---
+
+
+async def _fake_activity_link_stream():
+    for text in ["[Jumpin Heights](activity:", "66f1a2b3c4d5e6f7a8b9c0d1", ")!"]:
+        yield _FakeChunk(text)
+
+
+async def _fake_acompletion_with_activity_link(*_args, **kwargs):
+    if kwargs.get("stream"):
+        return _fake_activity_link_stream()
+    return _FakeNonStreamResponse()
+
+
+def test_chat_never_sends_the_raw_activity_id_even_inside_a_real_link(monkeypatch):
+    # Full round-trip through the actual endpoint (not just the StreamSanitizer
+    # unit): the SSE body the client receives must not contain the raw Mongo
+    # ObjectId anywhere - not as visible text, not inside the activity: link
+    # href either, where opening the browser's Inspect panel would reveal it.
+    from app.activity_ref import obfuscate_activity_id
+
+    monkeypatch.setattr("app.llm.litellm.acompletion", _fake_acompletion_with_activity_link)
+    monkeypatch.setattr("app.mcp_client.settings", type("S", (), {"mcp_server_url": ""})())
+
+    response = client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "tell me about Jumpin Heights"}]},
+    )
+
+    assert response.status_code == 200
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in response.text
+    token = obfuscate_activity_id("66f1a2b3c4d5e6f7a8b9c0d1")
+    assert f"activity:{token}" in response.text
+
+
 # --- error path -----------------------------------------------------------
 
 

@@ -137,6 +137,7 @@ enabled, and `CORS_ORIGINS` — no code branching required.
 | `WEAVIATE_URL` | No | Enables RAG when set |
 | `WEAVIATE_API_KEY` | No | Set for Weaviate Cloud; blank = self-hosted |
 | `MCP_SERVER_URL` | No | Enables live catalog tools when set |
+| `ACTIVITY_ID_KEY` | No | Obfuscates catalog activity ids before they reach the browser (see `backend/app/activity_ref.py`); override in production |
 | `VITE_API_BASE_URL` (frontend) | No | Backend base URL the UI talks to |
 
 ## 9. Testing & ops

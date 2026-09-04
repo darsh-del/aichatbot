@@ -1,6 +1,6 @@
 """Streaming-safe cleanup of assistant output before it reaches the client.
 
-Two jobs, one buffer, because both need the same fix for the same reason:
+Three jobs, one buffer, because they all need the same fix for the same reason:
   1. Strip em/en dash glyphs the model may still emit despite the prompt rule (§1.1).
   2. Strip a raw Mongo ObjectId that should have been wrapped in a real
      `[Name](activity:<id>)` link but wasn't (§2.1) — a model-formatting miss, not by
@@ -19,21 +19,31 @@ Two jobs, one buffer, because both need the same fix for the same reason:
      ever recognizes that exact lowercase href, so any other casing of the prefix -
      `](ACTIVITY:`, `](Activity:` - could never have been a working link either way
      and is correctly stripped like any other non-link occurrence.
+  3. Replace the id of a real, kept `[Name](activity:<id>)` link with its opaque
+     token (app/activity_ref.py) so the raw Mongo ObjectId never reaches the browser
+     at all — not as visible text (job 2's problem) and not sitting in the link's
+     href either, where anyone opening the browser's Inspect panel could read it
+     even though it never rendered as text. The LLM keeps using the real id for its
+     OWN tool calls (get_time_slots, get_activity_addons, add_to_cart, ...) — none of
+     that reaches the client — only the copy about to go out over SSE gets swapped.
 
-Job 2 needs a tail buffer: `delta.content` arrives from the provider stream in small,
-arbitrary-sized pieces, so a 24-char ObjectId routinely lands split across two or more
-chunks. A per-chunk regex would simply never see the whole token to match against.
-Job 1 doesn't strictly need buffering (a single Python str character can't itself be
-split across chunks) but runs through the same buffer for one code path.
+Jobs 2 and 3 need a tail buffer: `delta.content` arrives from the provider stream in
+small, arbitrary-sized pieces, so a 24-char ObjectId routinely lands split across two
+or more chunks. A per-chunk regex would simply never see the whole token to match
+against. Job 1 doesn't strictly need buffering (a single Python str character can't
+itself be split across chunks) but runs through the same buffer for one code path.
 
-This only touches what's sent to the client over SSE — the raw, unmodified text is
-still what's kept for the assistant's own conversation history (see call site in
-llm.py::stream_chat_response) and for the Redis session transcript. Sanitization is a
-presentation-layer concern; it must never alter what the model itself "said" in the
-conversation it continues to reason over.
+This only touches what's sent to the client over SSE — the raw, unmodified text
+(including the real ids) is still what's kept for the assistant's own conversation
+history (see call site in llm.py::stream_chat_response) and for the Redis session
+transcript, since the model needs its own tool-call ids to keep reasoning correctly
+turn to turn. Sanitization is a presentation-layer concern; it must never alter what
+the model itself "said" in the conversation it continues to reason over.
 """
 import logging
 import re
+
+from app.activity_ref import obfuscate_activity_id
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +81,22 @@ _NOT_ALNUM = r"[A-Za-z0-9]"
 _RAW_OBJECTID_RE = re.compile(
     rf"(?<!\]\(activity:)(?<!{_NOT_ALNUM})[a-fA-F0-9]{{24}}(?!{_NOT_ALNUM})"
 )
-# Same 24-hex shape, but with no lookbehind: used only to find ids that SURVIVED the
-# strip above (i.e. legitimate, kept ones) so feed() can avoid ever slicing between
-# such an id and its `](activity:` prefix - see the comment in feed() below.
-_ANY_HEX24_RE = re.compile(rf"(?<!{_NOT_ALNUM})[a-fA-F0-9]{{24}}(?!{_NOT_ALNUM})")
+# The mirror image: an id that IS a real, kept link (the exact "](activity:" prefix
+# is a fixed literal ending in ":", itself non-alnum, so no separate left-side
+# not-glued check is needed - the exact-prefix match already guarantees it). Swapped
+# for its token by _tokenize() rather than left in place - see job 3 above.
+_KEPT_ID_RE = re.compile(rf"(?<=\]\(activity:)[a-fA-F0-9]{{24}}(?!{_NOT_ALNUM})")
+
+
+def _tokenize(match: re.Match) -> str:
+    try:
+        return obfuscate_activity_id(match.group(0))
+    except ValueError:
+        # Regex guarantees 24 hex chars, so this shouldn't happen - but a stream
+        # sanitizer must never crash the response over this. Fall back to simply
+        # not leaking the raw id, same as the unprotected case.
+        logger.warning("StreamSanitizer could not tokenize an activity id; stripping it")
+        return ""
 
 
 class StreamSanitizer:
@@ -91,14 +113,20 @@ class StreamSanitizer:
     def feed(self, text: str) -> str:
         """Add newly streamed text; return the portion now safe to send to the client.
 
-        The ObjectId regex runs against the WHOLE buffer before any slicing —
-        not just the portion about to be released. Running it only on the
-        release slice (an earlier version of this method did that) misses an
-        ID that straddles the release/retain boundary: half of it goes out
-        in this call's release, the other half sits in the retained tail,
-        and neither half alone is 24 hex chars, so neither ever matches.
-        Substituting first, then slicing, guarantees any complete match is
-        caught while it's still whole in one buffer.
+        Both id regexes run against the WHOLE buffer before any slicing — not just
+        the portion about to be released. Running them only on the release slice
+        (an earlier version of this method did that) misses an id that straddles
+        the release/retain boundary: half of it goes out in this call's release,
+        the other half sits in the retained tail, and neither half alone is 24 hex
+        chars, so neither ever matches. Substituting first, then slicing, guarantees
+        any complete match is caught while it's still whole in one buffer.
+
+        Once both passes have run, nothing 24-hex-shaped is left in the buffer at
+        all: an unprotected id was removed, and a real link's id was replaced by
+        its (differently-shaped, differently-sized) token. That means slicing can
+        just cut at a fixed offset from the end - unlike an earlier version of this
+        method, there's no still-hex-shaped survivor left for a future call to
+        mis-decide with less context once its prefix has been sliced away.
         """
         self._buf += text.translate(_DASH_MAP)
         self._buf, hits = _RAW_OBJECTID_RE.subn("", self._buf)
@@ -107,24 +135,10 @@ class StreamSanitizer:
             # format the prompt mandates - the backstop caught it instead of the id
             # reaching the user raw. Not the id itself: it's not secret, just noise.
             logger.warning("StreamSanitizer stripped %d raw activity id(s) from output", hits)
+        self._buf = _KEPT_ID_RE.sub(_tokenize, self._buf)
         if len(self._buf) <= self._TAIL:
             return ""
-        cut = len(self._buf) - self._TAIL
-
-        # Any 24-hex blob still in the buffer at this point survived the strip above,
-        # so it's a real, already-verified `[Name](activity:<id>)` id - never split
-        # from its `](activity:` prefix by pushing `cut` through, or just past, it.
-        # A later feed()/flush() call re-runs the same strip regex on whatever's
-        # retained; if that call no longer has the full prefix in view (because an
-        # earlier cut released it separately from the id), the lookbehind fails and
-        # a perfectly valid link's id gets wrongly stripped out from under it - the
-        # bug worst-case (one-char-at-a-time) streaming exposed during testing.
-        for m in _ANY_HEX24_RE.finditer(self._buf):
-            if m.start() - len(_LINK_OPEN) < cut <= m.end():
-                cut = m.start() - len(_LINK_OPEN)
-        cut = max(cut, 0)
-
-        safe, self._buf = self._buf[:cut], self._buf[cut:]
+        safe, self._buf = self._buf[: -self._TAIL], self._buf[-self._TAIL :]
         return safe
 
     def flush(self) -> str:
