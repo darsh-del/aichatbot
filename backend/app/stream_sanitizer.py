@@ -45,13 +45,36 @@ logger = logging.getLogger(__name__)
 # markdown tables rely on (see the comparison-table `|---|---|` syntax).
 _DASH_MAP = str.maketrans({"—": ",", "–": "-"})
 _LINK_OPEN = "](activity:"  # the actual markdown link-open syntax, not just the bare word
+
+# Not-glued-to-more-alnum boundary, spelled out instead of `\b`. Python's `\b` is
+# Unicode-aware: it only anchors where a "word" char meets a "non-word" char, and a
+# Devanagari (or other Indic-script) letter IS a word char to it. This app must reply
+# in 26 Indian languages (knowledge_base.md's "Language: mirror the user" rule) and
+# the model doesn't reliably put an ASCII space between a link and the script text
+# right next to it - "...66f1a2b3c4d5e6f7a8b9c0d1देखें" has NO `\b` between the id
+# and "देखें" at all, so `\b[a-f0-9]{24}\b` would silently fail to match and the id
+# would leak straight through. What actually matters is only that the id isn't glued
+# to MORE Latin letters/digits (which would mean it's not really a clean 24-char
+# token) - so anchor on that specifically, in either script.
+#
+# ponytail: this still can't see an id glued to MORE Latin/digit characters on
+# either side with zero separator (e.g. two ids concatenated back-to-back, or
+# "id66f1a2b3c4d5e6f7a8b9c0d1x") - there's no boundary-based way to isolate a
+# 24-char run inside a longer unbroken alnum run without risking false positives
+# on real content. Not observed in practice (every leak seen so far has the id
+# isolated by at least punctuation/space/non-Latin-script), so not chased further.
+# Upgrade path if it ever is: match runs of >=24 hex chars and warn loudly rather
+# than silently mis-stripping a legitimate longer alnum token.
+_NOT_ALNUM = r"[A-Za-z0-9]"
 # Hex chars matched case-insensitively (a valid ObjectId in either case); the
 # link-open prefix is deliberately exact-case - see the module docstring.
-_RAW_OBJECTID_RE = re.compile(r"(?<!\]\(activity:)\b[a-fA-F0-9]{24}\b")
+_RAW_OBJECTID_RE = re.compile(
+    rf"(?<!\]\(activity:)(?<!{_NOT_ALNUM})[a-fA-F0-9]{{24}}(?!{_NOT_ALNUM})"
+)
 # Same 24-hex shape, but with no lookbehind: used only to find ids that SURVIVED the
 # strip above (i.e. legitimate, kept ones) so feed() can avoid ever slicing between
 # such an id and its `](activity:` prefix - see the comment in feed() below.
-_ANY_HEX24_RE = re.compile(r"\b[a-fA-F0-9]{24}\b")
+_ANY_HEX24_RE = re.compile(rf"(?<!{_NOT_ALNUM})[a-fA-F0-9]{{24}}(?!{_NOT_ALNUM})")
 
 
 class StreamSanitizer:

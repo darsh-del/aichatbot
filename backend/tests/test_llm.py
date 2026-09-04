@@ -268,6 +268,51 @@ def test_sanitizer_empty_flush_is_harmless():
     assert s.flush() == ""
 
 
+def test_sanitizer_strips_id_glued_to_devanagari_script_with_no_space():
+    # This app must reply in 26 Indian languages (knowledge_base.md's "Language:
+    # mirror the user" rule). Python's `\b` is Unicode-aware - a Devanagari letter
+    # counts as a "word" char to it, so an id glued directly against Hindi/Gujarati/
+    # etc. text with no space had NO \b boundary at all and matched nothing,
+    # leaking straight through. Anchoring on "not glued to more ASCII alnum"
+    # instead closes this regardless of what script surrounds the id.
+    s = StreamSanitizer()
+    out = s.feed("अधिक जानकारी के लिए 66f1a2b3c4d5e6f7a8b9c0d1देखें") + s.flush()
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+    assert "अधिक जानकारी के लिए" in out and "देखें" in out
+
+
+def test_sanitizer_preserves_real_link_glued_to_devanagari_script():
+    s = StreamSanitizer()
+    out = s.feed("[जंपिन हाइट्स](activity:66f1a2b3c4d5e6f7a8b9c0d1)देखें") + s.flush()
+    assert "activity:66f1a2b3c4d5e6f7a8b9c0d1" in out
+    assert "देखें" in out
+
+
+def test_sanitizer_strips_id_inside_inline_code_span():
+    s = StreamSanitizer()
+    out = s.feed("the id is `66f1a2b3c4d5e6f7a8b9c0d1` here") + s.flush()
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+
+
+def test_sanitizer_strips_id_when_prefix_has_a_stray_space_not_real_link_syntax():
+    # "](activity: <id>)" (space after the colon) isn't valid markdown link syntax
+    # either - react-markdown wouldn't parse it as a link - so it was never a
+    # working link and the id should still be stripped, not leaked as dead text.
+    s = StreamSanitizer()
+    out = s.feed("[Name](activity: 66f1a2b3c4d5e6f7a8b9c0d1)") + s.flush()
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+
+
+def test_sanitizer_does_not_leak_id_duplicated_as_the_link_text():
+    # "[<id>](activity:<id>)" - a model mistake putting the id in the visible link
+    # text too. The href copy is preserved (real link), the visible-text copy must
+    # still be stripped so the id never appears as plain reader-visible text.
+    s = StreamSanitizer()
+    out = s.feed("[66f1a2b3c4d5e6f7a8b9c0d1](activity:66f1a2b3c4d5e6f7a8b9c0d1)") + s.flush()
+    assert out.count("66f1a2b3c4d5e6f7a8b9c0d1") == 1
+    assert "activity:66f1a2b3c4d5e6f7a8b9c0d1" in out
+
+
 @pytest.mark.parametrize("chunk_size", [1, 2, 3, 5, 7, 11, 16, 40, 1000])
 def test_sanitizer_correct_at_every_chunk_size(chunk_size):
     # Real providers chunk unpredictably. Re-run the same realistic mixed reply
