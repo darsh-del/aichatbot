@@ -84,7 +84,11 @@ def retrieve(query: str, top_k: int = 6) -> str:
     try:
         # Embed the query using OpenAI
         t_embed = time.perf_counter()
-        oai = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        # timeout/max_retries: the client's own defaults (600s, retried) mean a
+        # slow-but-not-erroring OpenAI/Weaviate call degrades to "very slow
+        # chat" rather than the except-block's fail-open KB fallback below —
+        # that fallback only fires on an actual exception, not a hang.
+        oai = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""), timeout=5, max_retries=1)
         embedding_response = oai.embeddings.create(
             input=query,
             model="text-embedding-3-small",
@@ -117,8 +121,8 @@ def retrieve(query: str, top_k: int = 6) -> str:
 
     except Exception as exc:
         logger.exception("RAG retrieval failed after %.3fs", time.perf_counter() - t_total)
-        # retrieve() runs off the event loop (called via asyncio.to_thread from
-        # llm.py), so there's no running loop here for asyncio.create_task —
+        # retrieve() is sync and is called via asyncio.to_thread from llm.py,
+        # so there's no running loop in *this* thread for asyncio.create_task —
         # use the sync notifier entrypoint directly instead.
         from app.notifier import send_critical_alert_sync
         send_critical_alert_sync("weaviate_down", str(exc), f"Failed to retrieve context for query: {query}")

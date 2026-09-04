@@ -194,6 +194,29 @@ def test_wants_catalog_false_for_unrelated_chat():
     assert not _wants_catalog([{"role": "user", "content": "thanks so much!"}])
 
 
+# --- _wants_knowledge (RAG-skip gate for small talk) -----------------------
+
+from app.llm import _wants_knowledge
+
+
+def test_wants_knowledge_false_for_greeting():
+    assert not _wants_knowledge("hii how are you")
+
+
+def test_wants_knowledge_false_for_capability_question():
+    assert not _wants_knowledge("what can you do")
+
+
+def test_wants_knowledge_true_for_catalog_question():
+    assert _wants_knowledge("what rafting packages do you have in rishikesh")
+
+
+def test_wants_knowledge_true_on_ambiguous_input():
+    # Fail-safe direction: any word outside the small talk vocabulary means
+    # retrieval still runs — never silently skipped on a miss.
+    assert _wants_knowledge("hi, is bungee jumping safe for kids")
+
+
 # --- flow_guard.is_protected_turn (§5.2) -----------------------------------
 
 from app.flow_guard import is_protected_turn
@@ -232,7 +255,7 @@ def _fake_call(name, args_dict):
 
 
 def test_execute_tool_saves_verified_phone_only_after_verify_otp_succeeds(monkeypatch):
-    async def fake_call_catalog_tool(call):
+    async def fake_call_catalog_tool(call, session=None):
         if call.function.name == "verify_otp":
             return {"result": json.dumps({"authToken": "tok-123"})}
         return {"result": "{}"}
@@ -253,7 +276,7 @@ def test_execute_tool_saves_verified_phone_only_after_verify_otp_succeeds(monkey
 
 
 def test_execute_tool_does_not_save_phone_when_verify_otp_fails(monkeypatch):
-    async def fake_call_catalog_tool(call):
+    async def fake_call_catalog_tool(call, session=None):
         return {"result": json.dumps({"success": False})}  # no authToken -> not verified
 
     async def fail_if_called(*a, **k):
@@ -265,3 +288,35 @@ def test_execute_tool_does_not_save_phone_when_verify_otp_fails(monkeypatch):
     asyncio.run(llm_module._execute_tool(_fake_call("send_otp", {"phone": "+911234567890"}), "sess-fail"))
     asyncio.run(llm_module._execute_tool(_fake_call("verify_otp", {"otp": "000000"}), "sess-fail"))
     # No assertion error raised above == save_verified_phone was correctly skipped.
+
+
+# --- RAG retrieval call site: off-thread + gated (latency fix) ------------
+
+import threading
+
+from app.config import settings as _settings
+from app.schemas import ChatMessage as _ChatMessage
+
+
+def test_rag_retrieval_runs_off_the_event_loop_and_is_gated(monkeypatch):
+    seen = {}
+
+    def fake_retrieve(query, top_k=1):
+        seen["top_k"] = top_k
+        seen["on_main_thread"] = threading.current_thread() is threading.main_thread()
+        return "CHUNKS"
+
+    monkeypatch.setattr(_settings, "weaviate_url", "http://weaviate:8080")
+    monkeypatch.setattr(llm_module, "retrieve", fake_retrieve)
+
+    messages = asyncio.run(
+        llm_module.build_messages([_ChatMessage(role="user", content="rafting in rishikesh")])
+    )
+    assert seen == {"top_k": 6, "on_main_thread": False}
+    assert "CHUNKS" in messages[0]["content"][1]["text"]
+
+    # Smalltalk skips the call entirely — fake_retrieve would raise via `seen`
+    # staying stale if it ran, but assert explicitly for clarity.
+    seen.clear()
+    asyncio.run(llm_module.build_messages([_ChatMessage(role="user", content="hii how are you")]))
+    assert seen == {}

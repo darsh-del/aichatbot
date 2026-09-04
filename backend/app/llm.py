@@ -104,6 +104,46 @@ def _wants_catalog(messages: list[dict]) -> bool:
     return bool(_CATALOG_RE.search(_latest_user_message(messages)))
 
 
+# Cheap, deterministic pre-check for "this message is plainly small talk —
+# the KB/RAG has nothing to add." Mirrors _wants_catalog's shape but the
+# opposite fail-safe direction: this only ever SKIPS an optional retrieval
+# call, never blocks or forces anything, so on any doubt (any word outside
+# this small hand-picked vocabulary — an activity name, a place, a policy
+# question, ...) it returns True and retrieval still runs exactly as before.
+#
+# Deliberately NOT paired with flow_guard.is_protected_turn the way
+# _wants_catalog is (see below): that pairing exists because _wants_catalog
+# can change what the LLM is *allowed* to do (force vs. auto tool choice).
+# RAG is purely additive context on top of the system prompt — skipping it
+# never skips the LLM call, the flat KB, or any tool the model can still
+# reach for — so a protected turn ("yes", "hi", an OTP) safely skipping RAG
+# too isn't a flow-guard violation, just an unnecessary lookup avoided.
+_SMALLTALK_WORDS = {
+    "hi", "hii", "hiii", "hey", "heyy", "hello", "yo", "sup", "morning",
+    "good", "afternoon", "evening", "how", "are", "you", "whats", "what's",
+    "up", "doing", "going", "who", "what", "can", "do", "there", "hows",
+    "thanks", "thank", "thx", "ok", "okay", "cool", "nice", "great",
+    "bye", "goodbye", "see", "ya", "yes", "no", "yep", "nope", "lol",
+}
+_GREETING_WORD_RE = re.compile(r"^h+[ei]{1,4}y*$")  # hi/hii/hiii/hey/heyy/...
+_SMALLTALK_PUNCT_RE = re.compile(r"[!.?,]")
+
+
+def _wants_knowledge(latest_user_text: str) -> bool:
+    """False only when every word in the message is small talk. Skips the
+    RAG lookup (§ module docstring) for greetings/chitchat like "hii how are
+    you" or "what can you do" — everything else, including anything not
+    confidently recognized, still retrieves.
+    """
+    # Normalize the curly apostrophe mobile autocorrect produces ("what’s")
+    # to the ASCII one already in _SMALLTALK_WORDS ("what's").
+    normalized = latest_user_text.strip().lower().replace("’", "'")
+    words = _SMALLTALK_PUNCT_RE.sub("", normalized).split()
+    if not words:
+        return True
+    return not all(w in _SMALLTALK_WORDS or _GREETING_WORD_RE.match(w) for w in words)
+
+
 # -- Cached base prompt (file doesn't change at runtime) ---------------------
 _base_prompt_cache: str | None = None
 
@@ -252,8 +292,11 @@ async def build_messages(
             (m.content for m in reversed(chat_messages) if m.role == "user"),
             "",
         )
-        if latest_query:
-            rag_context = retrieve(latest_query, top_k=6)
+        if latest_query and _wants_knowledge(latest_query):
+            # retrieve() makes blocking network calls (OpenAI embeddings +
+            # Weaviate) — off-thread so it doesn't stall the single asyncio
+            # event loop this app runs on (see retriever.py's own note).
+            rag_context = await asyncio.to_thread(retrieve, latest_query, top_k=6)
 
     if rag_context:
         dynamic_parts.append(
