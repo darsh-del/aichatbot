@@ -370,6 +370,48 @@ def test_sanitizer_does_not_log_for_clean_output(caplog):
     assert caplog.records == []
 
 
+# --- _render_html (§4: proper tags for API consumers that don't render markdown) --
+
+from app.llm import _render_html
+
+
+def test_render_html_bold_and_link():
+    out = _render_html("**Splash Bungy** offers [Jumpin Heights](activity:tok123)")
+    assert "<strong>Splash Bungy</strong>" in out
+    assert '<a href="activity:tok123">Jumpin Heights</a>' in out
+
+
+def test_render_html_table():
+    md = "| Feature | A | B |\n|---|---|---|\n| Price | 100 | 200 |\n"
+    out = _render_html(md)
+    assert "<table>" in out and "<th>Feature</th>" in out and "<td>Price</td>" in out
+
+
+def test_render_html_strikethrough_price():
+    # KB's price-anchoring rule uses ~~old~~ new for discounts.
+    out = _render_html("~~₹3,500~~ ₹2,800")
+    assert "<del>₹3,500</del>" in out
+
+
+def test_render_html_escapes_script_tags_the_model_might_emit():
+    # This output can be embedded directly into a third-party page - a reply
+    # that echoes back HTML (whether hallucinated, or steered there by a
+    # prompt-injection attempt in the conversation) must never turn into a
+    # live tag once rendered, or it becomes stored XSS for whoever renders it.
+    out = _render_html("<script>alert(1)</script>")
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_render_html_blocks_javascript_protocol_links():
+    out = _render_html("[click me](javascript:alert(1))")
+    assert "javascript:" not in out
+
+
+def test_render_html_empty_input_returns_empty_string():
+    assert _render_html("") == ""
+
+
 # --- _latest_user_message / _wants_catalog (§3.3 tool-choice gate) --------
 
 from app.llm import _latest_user_message, _wants_catalog

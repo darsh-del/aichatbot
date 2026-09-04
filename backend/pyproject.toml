@@ -30,6 +30,7 @@ dependencies = [
     "defusedxml>=0.7",           # safe XML parsing for docx extraction
     "filetype>=1.2",             # magic-byte content-type sniffing
     "clamd>=1.0",                # ClamAV daemon client
+    "mistune>=3.0",              # markdown -> HTML for API consumers that don't render markdown themselves
 ]
 
 [project.optional-dependencies]

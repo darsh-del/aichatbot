@@ -8,7 +8,10 @@ Full inventory of what this software does today. For *why* things are built this
 - `POST /api/chat` accepts the full message history (`{role: "user"|"assistant", content}[]`)
   and streams the reply back as Server-Sent Events — one `data: {"delta": "...", "done": bool}`
   frame per token, ending with `done: true` (an `error` field is set instead of the stream just
-  dropping if anything fails).
+  dropping if anything fails). The final frame also carries an `html` field: the complete reply
+  rendered to sanitized HTML (`<strong>`/`<a>`/`<table>`/`<del>` etc., via `app/llm.py::_render_html`)
+  for API consumers that don't run their own markdown renderer — this repo's own frontend ignores
+  it and renders `delta` itself via react-markdown.
 - The client is stateless: no server-side session storage. Each request resends the full
   conversation; the frontend ([api/chat.ts](frontend/src/api/chat.ts)) decodes the SSE stream and
   calls back per token as it arrives.
