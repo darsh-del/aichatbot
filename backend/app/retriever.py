@@ -6,6 +6,7 @@ Loaded lazily so the backend still starts even if Weaviate is not configured
 
 import logging
 import os
+import threading
 import time
 from typing import Optional
 
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 _client = None
 _collection = None
 _weaviate_available: Optional[bool] = None
+_init_lock = threading.Lock()
 
 
 def _get_collection():
@@ -26,45 +28,54 @@ def _get_collection():
     if _collection is not None:
         return _collection
 
-    weaviate_url = os.environ.get("WEAVIATE_URL", "")
-    weaviate_api_key = os.environ.get("WEAVIATE_API_KEY", "")
-    openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+    # retrieve() runs via asyncio.to_thread, so concurrent cold-start requests
+    # can race in here. Serialize init; the losers just reuse the winner's
+    # client instead of each opening (and leaking) their own.
+    with _init_lock:
+        if _weaviate_available is False:
+            return None
+        if _collection is not None:
+            return _collection
 
-    # weaviate_api_key is only required for Weaviate Cloud; a self-hosted
-    # instance (docker-compose `weaviate` service) runs with anonymous access.
-    if not weaviate_url:
-        _weaviate_available = False
-        logger.info("WEAVIATE_URL not set — RAG disabled, using flat KB only")
-        return None
+        weaviate_url = os.environ.get("WEAVIATE_URL", "")
+        weaviate_api_key = os.environ.get("WEAVIATE_API_KEY", "")
+        openai_api_key = os.environ.get("OPENAI_API_KEY", "")
 
-    t0 = time.perf_counter()
-    try:
-        import weaviate
-        from urllib.parse import urlparse
-        from weaviate.classes.init import Auth
+        # weaviate_api_key is only required for Weaviate Cloud; a self-hosted
+        # instance (docker-compose `weaviate` service) runs with anonymous access.
+        if not weaviate_url:
+            _weaviate_available = False
+            logger.info("WEAVIATE_URL not set — RAG disabled, using flat KB only")
+            return None
 
-        if weaviate_api_key:
-            _client = weaviate.connect_to_weaviate_cloud(
-                cluster_url=weaviate_url,
-                auth_credentials=Auth.api_key(weaviate_api_key),
-                headers={"X-OpenAI-Api-Key": openai_api_key},
-            )
-        else:
-            # Self-hosted Weaviate (e.g. the `weaviate` service in docker-compose.yml)
-            parsed = urlparse(weaviate_url)
-            _client = weaviate.connect_to_local(
-                host=parsed.hostname or "localhost",
-                port=parsed.port or 8080,
-                headers={"X-OpenAI-Api-Key": openai_api_key},
-            )
-        _collection = _client.collections.get("BucketlisttKB")
-        _weaviate_available = True
-        logger.info("Weaviate connected in %.3fs — %s", time.perf_counter() - t0, weaviate_url)
-        return _collection
-    except Exception as exc:
-        _weaviate_available = False
-        logger.error("Weaviate init failed after %.3fs: %s — RAG disabled, using flat KB only", time.perf_counter() - t0, exc)
-        return None
+        t0 = time.perf_counter()
+        try:
+            import weaviate
+            from urllib.parse import urlparse
+            from weaviate.classes.init import Auth
+
+            if weaviate_api_key:
+                _client = weaviate.connect_to_weaviate_cloud(
+                    cluster_url=weaviate_url,
+                    auth_credentials=Auth.api_key(weaviate_api_key),
+                    headers={"X-OpenAI-Api-Key": openai_api_key},
+                )
+            else:
+                # Self-hosted Weaviate (e.g. the `weaviate` service in docker-compose.yml)
+                parsed = urlparse(weaviate_url)
+                _client = weaviate.connect_to_local(
+                    host=parsed.hostname or "localhost",
+                    port=parsed.port or 8080,
+                    headers={"X-OpenAI-Api-Key": openai_api_key},
+                )
+            _collection = _client.collections.get("BucketlisttKB")
+            _weaviate_available = True
+            logger.info("Weaviate connected in %.3fs — %s", time.perf_counter() - t0, weaviate_url)
+            return _collection
+        except Exception as exc:
+            _weaviate_available = False
+            logger.error("Weaviate init failed after %.3fs: %s — RAG disabled, using flat KB only", time.perf_counter() - t0, exc)
+            return None
 
 
 def retrieve(query: str, top_k: int = 6) -> str:
