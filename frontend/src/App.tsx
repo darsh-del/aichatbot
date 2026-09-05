@@ -5,7 +5,6 @@ import type { ChatMessage, UserInfo } from './api/chat'
 import { Header } from './components/Header'
 import { Sidebar } from './components/Sidebar'
 import { QuickChips } from './components/QuickChips'
-import { ActivityModal } from './components/ActivityModal'
 import { LeadModal } from './components/LeadModal'
 import { AttachmentPicker } from './components/AttachmentPicker'
 import type { PendingAttachment } from './api/chat'
@@ -89,7 +88,6 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
-  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null)
   const [showLoginPrompt, setShowLoginPrompt] = useState(false)
   const [toolStatus, setToolStatus] = useState<string | null>(null)
   const [loadingPhrase, setLoadingPhrase] = useState(LOADING_PHRASES[0])
@@ -276,7 +274,7 @@ function App() {
 
           {messages.map((m) => (
             <div key={m.id} className={`message-row row--${m.role}`}>
-              <MessageContent content={m.content} role={m.role} onActivityClick={setSelectedActivityId} />
+              <MessageContent content={m.content} role={m.role} />
             </div>
           ))}
 
@@ -347,11 +345,6 @@ function App() {
         isOpen={isLeadModalOpen}
         onClose={() => setIsLeadModalOpen(false)}
         onSubmitLead={sendPromptMessage}
-      />
-
-      <ActivityModal
-        activityId={selectedActivityId}
-        onClose={() => setSelectedActivityId(null)}
       />
     </div>
   )

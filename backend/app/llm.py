@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 import litellm
-import mistune
 
 from app.config import settings
 
@@ -607,33 +606,6 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-# This repo's own frontend (frontend/src/components/MessageContent.tsx) renders
-# `delta` itself via react-markdown/remark-gfm and never touches this - it's for
-# a different API consumer that doesn't run its own markdown renderer and just
-# wants ready-made <strong>/<a>/<table>/<del> tags. `escape=True` (mistune's
-# default) HTML-escapes any raw HTML the model's own text might contain, so a
-# reply can never inject a tag into whatever page embeds this output.
-# `allow_harmful_protocols=["activity:"]` is needed because mistune's link-safety
-# check otherwise treats this app's own custom `activity:` scheme the same as
-# `javascript:` and silently replaces the href with "#harmful-link".
-_MD_RENDERER = mistune.create_markdown(
-    renderer=mistune.HTMLRenderer(escape=True, allow_harmful_protocols=["activity:"]),
-    plugins=["strikethrough", "table", "url"],
-)
-
-
-def _render_html(markdown_text: str) -> str:
-    """Render the final, already-sanitized reply to HTML. Never raises - a
-    rendering hiccup should degrade to "no html field", not fail the request."""
-    if not markdown_text:
-        return ""
-    try:
-        return _MD_RENDERER(markdown_text)
-    except Exception:  # pylint: disable=broad-except
-        logger.exception("Markdown-to-HTML rendering failed; omitting html field")
-        return ""
-
-
 def _error_message(exc: BaseException) -> str:
     """Unwrap anyio's TaskGroup ExceptionGroup (from the MCP session) to the real cause."""
     if isinstance(exc, BaseExceptionGroup):
@@ -659,7 +631,6 @@ async def stream_chat_response(
 
         token_count = 0
         assistant_content = []
-        sanitized_content = []  # what the client actually saw - the html field renders THIS, never the raw text
         sanitizer = StreamSanitizer()
         async for event in _run_tool_loop(messages, session_id):
             if isinstance(event, tuple):
@@ -669,14 +640,12 @@ async def stream_chat_response(
                     assistant_content.append(delta)  # raw text — for history/session save, never sanitized
                     clean = sanitizer.feed(delta)     # sanitized — this is what the client actually sees
                     if clean:
-                        sanitized_content.append(clean)
                         yield _sse({"delta": clean, "done": False})
             else:
                 yield _sse({"status": event, "done": False})
 
         tail = sanitizer.flush()
         if tail:
-            sanitized_content.append(tail)
             yield _sse({"delta": tail, "done": False})
 
         # Save the turn to Redis session
@@ -688,8 +657,7 @@ async def stream_chat_response(
                 yield _sse({"prompt_login": True, "done": False})
                 await mark_login_prompted(session_id)
 
-        html = _render_html("".join(sanitized_content))
-        yield _sse({"delta": "", "done": True, "html": html})
+        yield _sse({"delta": "", "done": True})
         logger.info("Request complete — %d delta chunks, total %.3fs", token_count, time.perf_counter() - t_request)
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Chat request failed after %.3fs", time.perf_counter() - t_request)

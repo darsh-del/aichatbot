@@ -102,7 +102,6 @@ def test_tool_loop_includes_bungee_summary_for_bungee_query(monkeypatch):
 
 # --- StreamSanitizer (dash/activity-ID streaming backstop, §1.2/§2.2) -----
 
-from app.activity_ref import get_or_create_ref
 from app.stream_sanitizer import StreamSanitizer
 
 
@@ -154,69 +153,30 @@ def test_sanitizer_releases_output_progressively_once_past_the_tail_window():
     assert full == "This is a longer reply well past the buffer window."
 
 
-def test_sanitizer_tokenizes_id_inside_activity_link():
-    # A real link's id is never left in place - it's swapped for its opaque
-    # token so the raw Mongo ObjectId never reaches the browser at all, not
-    # even inside the href (see app/activity_ref.py).
-    s = StreamSanitizer()
-    out = "".join([
-        s.feed("[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1)"),
-        s.flush(),
-    ])
-    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
-    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
-    assert f"activity:{token}" in out
-
-
-def test_sanitizer_strips_upper_case_id_written_as_bare_prose():
-    # Live bug report: the model emitted "(ACTIVITY:69B90FEFB32379387CBAAC66)" as
-    # bare prose (not a real link) — the old [a-f0-9]-only pattern is case-sensitive
-    # and never matches upper-case hex, so it sailed straight through unstripped.
+def test_sanitizer_strips_upper_case_id():
+    # Live bug report: the model emitted "(ACTIVITY:69B90FEFB32379387CBAAC66)" -
+    # the old [a-f0-9]-only pattern is case-sensitive and never matches upper-case
+    # hex, so it sailed straight through unstripped.
     s = StreamSanitizer()
     out = s.feed("Plain River Rafting\n(ACTIVITY:69B90FEFB32379387CBAAC66)\n\nIncludes") + s.flush()
     assert "69B90FEFB32379387CBAAC66" not in out
     assert "Plain River Rafting" in out and "Includes" in out
 
 
-def test_sanitizer_tokenizes_upper_case_id_inside_a_real_link():
-    # A real link's id can still be upper-case hex (valid either way) - only the
-    # `](activity:` prefix casing matters, since that's the exact string the
-    # frontend's ACTIVITY_LINK_PREFIX check recognizes (case-sensitive). Either
-    # way, the id itself still gets swapped for its token, not left as-is.
-    s = StreamSanitizer()
-    out = s.feed("[Jumpin Heights](activity:69B90FEFB32379387CBAAC66)") + s.flush()
-    assert "69B90FEFB32379387CBAAC66" not in out
-    token = get_or_create_ref("69B90FEFB32379387CBAAC66")
-    assert f"activity:{token}" in out
-
-
-def test_sanitizer_strips_id_when_the_link_prefix_itself_is_wrong_case():
-    # "[Name](ACTIVITY:id)" isn't a href the frontend recognizes either (its check
-    # is case-sensitive on the lowercase prefix) - so it was never a working link,
-    # and the backstop should strip the id rather than let it show as dead/plain text.
-    s = StreamSanitizer()
-    out = s.feed("[Jumpin Heights](ACTIVITY:69b90fefb32379387cbaac66)") + s.flush()
-    assert "69b90fefb32379387cbaac66" not in out
-
-
-def test_sanitizer_strips_id_written_as_bare_prose_not_a_real_link():
-    # Regression: the model sometimes references an activity id in loose prose
-    # ("see activity:<id> for more") instead of the mandated [Name](activity:<id>)
-    # link. That's not real markdown link syntax so it never rendered as a link -
-    # a looser lookbehind used to treat the bare word "activity:" as proof of a
-    # real link and let the raw id through unstripped, leaking it to the user.
+def test_sanitizer_strips_id_regardless_of_surrounding_text():
+    # Activities are referenced by name only now (no more activity: links), so
+    # there's no "protected" case at all - any raw id gets stripped, always.
     s = StreamSanitizer()
     out = "".join([
-        s.feed("see activity:66f1a2b3c4d5e6f7a8b9c0d1 for more"),
+        s.feed("see activity:66f1a2b3c4d5e6f7a8b9c0d1 for more, or "),
+        s.feed("[Jumpin Heights](activity:77a2b3c4d5e6f7a8b9c0d1e2) here too"),
         s.flush(),
     ])
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+    assert "77a2b3c4d5e6f7a8b9c0d1e2" not in out
 
 
-def test_sanitizer_tokenizes_id_split_across_chunks_even_with_link_prefix_nearby():
-    # The link-open prefix and the id can each land in their own chunk. The tail
-    # buffer must hold enough of both together for the lookbehind to still see
-    # the real link syntax once the id completes.
+def test_sanitizer_strips_id_split_across_chunks():
     s = StreamSanitizer()
     out = "".join([
         s.feed("[Jumpin Heights]("),
@@ -225,23 +185,15 @@ def test_sanitizer_tokenizes_id_split_across_chunks_even_with_link_prefix_nearby
         s.flush(),
     ])
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
-    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
-    assert f"activity:{token}" in out
 
 
-def test_sanitizer_correct_character_by_character_worst_case_chunking():
-    # Worst-case provider chunking: one character per delta. Exercises both the
-    # link-tokenizing path and the bare-prose-stripping path under maximum splitting.
+def test_sanitizer_strips_id_character_by_character_worst_case_chunking():
+    # Worst-case provider chunking: one character per delta.
     s = StreamSanitizer()
-    link_text = "[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) is great"
-    out = "".join(s.feed(ch) for ch in link_text) + s.flush()
-    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
-    assert out == f"[Jumpin Heights](activity:{token}) is great"
-
-    s2 = StreamSanitizer()
-    prose = "see activity:66f1a2b3c4d5e6f7a8b9c0d1 for more"
-    out2 = "".join(s2.feed(ch) for ch in prose) + s2.flush()
-    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out2
+    text = "[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) is great"
+    out = "".join(s.feed(ch) for ch in text) + s.flush()
+    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
+    assert "[Jumpin Heights](activity:)" in out
 
 
 def test_sanitizer_strips_multiple_raw_ids_in_one_message():
@@ -256,18 +208,8 @@ def test_sanitizer_strips_multiple_raw_ids_in_one_message():
     assert "Options:" in out and "pick one." in out
 
 
-def test_sanitizer_tokenizes_multiple_real_links_in_one_message():
-    s = StreamSanitizer()
-    id_a, id_b = "66f1a2b3c4d5e6f7a8b9c0d1", "77a2b3c4d5e6f7a8b9c0d1e2"
-    text = f"| [A](activity:{id_a}) | [B](activity:{id_b}) |"
-    out = s.feed(text) + s.flush()
-    assert id_a not in out and id_b not in out
-    token_a, token_b = get_or_create_ref(id_a), get_or_create_ref(id_b)
-    assert out == f"| [A](activity:{token_a}) | [B](activity:{token_b}) |"
-
-
 def test_sanitizer_dash_mapping_unaffected_by_id_stripping():
-    # The two jobs share one buffer/regex pass — make sure fixing job 2 (id
+    # The two jobs share one buffer/regex pass — make sure job 2 (id
     # stripping) didn't disturb job 1 (dash mapping) running alongside it.
     s = StreamSanitizer()
     out = s.feed("20–130 kg — right next to 66f1a2b3c4d5e6f7a8b9c0d1 raw") + s.flush()
@@ -294,64 +236,29 @@ def test_sanitizer_strips_id_glued_to_devanagari_script_with_no_space():
     assert "अधिक जानकारी के लिए" in out and "देखें" in out
 
 
-def test_sanitizer_tokenizes_real_link_glued_to_devanagari_script():
-    s = StreamSanitizer()
-    out = s.feed("[जंपिन हाइट्स](activity:66f1a2b3c4d5e6f7a8b9c0d1)देखें") + s.flush()
-    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
-    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
-    assert f"activity:{token}" in out
-    assert "देखें" in out
-
-
 def test_sanitizer_strips_id_inside_inline_code_span():
     s = StreamSanitizer()
     out = s.feed("the id is `66f1a2b3c4d5e6f7a8b9c0d1` here") + s.flush()
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
 
 
-def test_sanitizer_strips_id_when_prefix_has_a_stray_space_not_real_link_syntax():
-    # "](activity: <id>)" (space after the colon) isn't valid markdown link syntax
-    # either - react-markdown wouldn't parse it as a link - so it was never a
-    # working link and the id should still be stripped, not leaked as dead text.
-    s = StreamSanitizer()
-    out = s.feed("[Name](activity: 66f1a2b3c4d5e6f7a8b9c0d1)") + s.flush()
-    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
-
-
-def test_sanitizer_does_not_leak_id_duplicated_as_the_link_text():
-    # "[<id>](activity:<id>)" - a model mistake putting the id in the visible link
-    # text too. The visible-text copy is stripped (not a real link there), and the
-    # href copy is tokenized - so the raw id shouldn't appear anywhere in the output.
-    s = StreamSanitizer()
-    out = s.feed("[66f1a2b3c4d5e6f7a8b9c0d1](activity:66f1a2b3c4d5e6f7a8b9c0d1)") + s.flush()
-    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in out
-    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
-    assert f"activity:{token}" in out
-
-
 @pytest.mark.parametrize("chunk_size", [1, 2, 3, 5, 7, 11, 16, 40, 1000])
 def test_sanitizer_correct_at_every_chunk_size(chunk_size):
     # Real providers chunk unpredictably. Re-run the same realistic mixed reply
-    # (two real links, a stray bare-prose id, an em dash and an en dash) sliced
-    # into every chunk size from pathological (1 char) to a single chunk, and
-    # assert the identical, fully-correct output every time.
-    id_a, id_b, id_c = "66f1a2b3c4d5e6f7a8b9c0d1", "77a2b3c4d5e6f7a8b9c0d1e2", "88b3c4d5e6f7a8b9c0d1e2f3"
+    # (multiple raw ids, an em dash and an en dash) sliced into every chunk
+    # size from pathological (1 char) to a single chunk, and assert the
+    # identical, fully-correct output every time.
+    id_a, id_b = "66f1a2b3c4d5e6f7a8b9c0d1", "77a2b3c4d5e6f7a8b9c0d1e2"
     reply = (
-        f"Compare [Jumpin Heights](activity:{id_a}) and "
-        f"[Splash Bungy](activity:{id_b}) — 20–130 kg range. "
-        f"Someone mentioned activity:{id_c} in passing, ignore that."
+        f"Compare Jumpin Heights ({id_a}) and "
+        f"Splash Bungy ({id_b}) — 20–130 kg range."
     )
-    token_a, token_b = get_or_create_ref(id_a), get_or_create_ref(id_b)
-    expected = (
-        f"Compare [Jumpin Heights](activity:{token_a}) and "
-        f"[Splash Bungy](activity:{token_b}) , 20-130 kg range. "
-        "Someone mentioned activity: in passing, ignore that."
-    )
+    expected = "Compare Jumpin Heights () and Splash Bungy () , 20-130 kg range."
     s = StreamSanitizer()
     chunks = [reply[i : i + chunk_size] for i in range(0, len(reply), chunk_size)]
     out = "".join(s.feed(c) for c in chunks) + s.flush()
     assert out == expected
-    assert id_a not in out and id_b not in out and id_c not in out
+    assert id_a not in out and id_b not in out
 
 
 def test_sanitizer_logs_warning_when_raw_id_is_stripped(caplog):
@@ -365,51 +272,9 @@ def test_sanitizer_logs_warning_when_raw_id_is_stripped(caplog):
 def test_sanitizer_does_not_log_for_clean_output(caplog):
     s = StreamSanitizer()
     with caplog.at_level("WARNING", logger="app.stream_sanitizer"):
-        s.feed("[Jumpin Heights](activity:66f1a2b3c4d5e6f7a8b9c0d1) — nice pick")
+        s.feed("**Jumpin Heights** — nice pick")
         s.flush()
     assert caplog.records == []
-
-
-# --- _render_html (§4: proper tags for API consumers that don't render markdown) --
-
-from app.llm import _render_html
-
-
-def test_render_html_bold_and_link():
-    out = _render_html("**Splash Bungy** offers [Jumpin Heights](activity:tok123)")
-    assert "<strong>Splash Bungy</strong>" in out
-    assert '<a href="activity:tok123">Jumpin Heights</a>' in out
-
-
-def test_render_html_table():
-    md = "| Feature | A | B |\n|---|---|---|\n| Price | 100 | 200 |\n"
-    out = _render_html(md)
-    assert "<table>" in out and "<th>Feature</th>" in out and "<td>Price</td>" in out
-
-
-def test_render_html_strikethrough_price():
-    # KB's price-anchoring rule uses ~~old~~ new for discounts.
-    out = _render_html("~~₹3,500~~ ₹2,800")
-    assert "<del>₹3,500</del>" in out
-
-
-def test_render_html_escapes_script_tags_the_model_might_emit():
-    # This output can be embedded directly into a third-party page - a reply
-    # that echoes back HTML (whether hallucinated, or steered there by a
-    # prompt-injection attempt in the conversation) must never turn into a
-    # live tag once rendered, or it becomes stored XSS for whoever renders it.
-    out = _render_html("<script>alert(1)</script>")
-    assert "<script>" not in out
-    assert "&lt;script&gt;" in out
-
-
-def test_render_html_blocks_javascript_protocol_links():
-    out = _render_html("[click me](javascript:alert(1))")
-    assert "javascript:" not in out
-
-
-def test_render_html_empty_input_returns_empty_string():
-    assert _render_html("") == ""
 
 
 # --- _latest_user_message / _wants_catalog (§3.3 tool-choice gate) --------

@@ -1,18 +1,16 @@
 import React, { useState } from 'react'
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
+import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
 interface MessageContentProps {
   content: string
   role: 'user' | 'assistant'
-  onActivityClick?: (activityId: string) => void
 }
 
 const CART_URL = 'https://www.bucketlistt.com/experiences/cart'
 const CART_URL_RE = /https?:\/\/(?:www\.)?bucketlistt\.com\/cart\b(?![\w/])/g
-const ACTIVITY_LINK_PREFIX = 'activity:'
 
-export const MessageContent: React.FC<MessageContentProps> = ({ content, role, onActivityClick }) => {
+export const MessageContent: React.FC<MessageContentProps> = ({ content, role }) => {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
@@ -84,27 +82,10 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, role, o
         <div className="formatted-text-wrapper">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            urlTransform={(url) => (url.startsWith(ACTIVITY_LINK_PREFIX) ? url : defaultUrlTransform(url))}
             components={{
-              a: ({ node: _n, href, ...props }) => {
-                if (href?.startsWith(ACTIVITY_LINK_PREFIX)) {
-                  const activityId = href.slice(ACTIVITY_LINK_PREFIX.length)
-                  return (
-                    <a
-                      {...props}
-                      href={href}
-                      className="styled-chat-link activity-link"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        onActivityClick?.(activityId)
-                      }}
-                    />
-                  )
-                }
-                return (
-                  <a {...props} href={href} target="_blank" rel="noopener noreferrer" className="styled-chat-link" />
-                )
-              },
+              a: ({ node: _n, href, ...props }) => (
+                <a {...props} href={href} target="_blank" rel="noopener noreferrer" className="styled-chat-link" />
+              ),
               strong: ({ node: _n, ...props }) => <strong {...props} className="highlight-bold" />,
             }}
           >

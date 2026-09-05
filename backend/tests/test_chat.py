@@ -100,45 +100,43 @@ def test_chat_streams_expected_sse_frame_sequence(monkeypatch):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
 
-    # Updated for the StreamSanitizer backstop (app/stream_sanitizer.py): it
-    # holds back a small tail window of output at all times (StreamSanitizer._TAIL —
-    # sized to fit an `](activity:` link-open prefix plus a full Mongo ObjectId) so
-    # neither can ever be missed for landing split across provider stream chunks
-    # (see test_llm.py's sanitizer tests). "Hello world!" is only 12 characters,
-    # under that hold-back window, so nothing releases until the final
-    # flush — the whole reply arrives in one delta instead of three small
-    # ones. This is expected, not a regression: a real response of any
-    # normal length still streams progressively, just trailing the true
-    # generation by a small, roughly-constant tail buffer.
+    # StreamSanitizer (app/stream_sanitizer.py) holds back a small tail window
+    # of output at all times (StreamSanitizer._TAIL — sized to a full Mongo
+    # ObjectId) so an id can never be missed for landing split across provider
+    # stream chunks (see test_llm.py's sanitizer tests). "Hello world!" is only
+    # 12 characters, under that hold-back window, so nothing releases until the
+    # final flush — the whole reply arrives in one delta instead of three small
+    # ones. This is expected, not a regression: a real response of any normal
+    # length still streams progressively, just trailing the true generation by
+    # a small, roughly-constant tail buffer.
     frames = _sse_frames(response.text)
     assert frames == [
         'data: {"delta": "Hello world!", "done": false}',
-        'data: {"delta": "", "done": true, "html": "<p>Hello world!</p>\\n"}',
+        'data: {"delta": "", "done": true}',
     ]
 
 
-# --- end-to-end: activity ids never reach the client, in a real link either ---
+# --- end-to-end: a raw activity id never reaches the client ----------------
 
 
-async def _fake_activity_link_stream():
-    for text in ["[Jumpin Heights](activity:", "66f1a2b3c4d5e6f7a8b9c0d1", ")!"]:
+async def _fake_activity_id_stream():
+    for text in ["Jumpin Heights (", "66f1a2b3c4d5e6f7a8b9c0d1", ")!"]:
         yield _FakeChunk(text)
 
 
-async def _fake_acompletion_with_activity_link(*_args, **kwargs):
+async def _fake_acompletion_with_activity_id(*_args, **kwargs):
     if kwargs.get("stream"):
-        return _fake_activity_link_stream()
+        return _fake_activity_id_stream()
     return _FakeNonStreamResponse()
 
 
-def test_chat_never_sends_the_raw_activity_id_even_inside_a_real_link(monkeypatch):
+def test_chat_never_sends_the_raw_activity_id(monkeypatch):
     # Full round-trip through the actual endpoint (not just the StreamSanitizer
     # unit): the SSE body the client receives must not contain the raw Mongo
-    # ObjectId anywhere - not as visible text, not inside the activity: link
-    # href either, where opening the browser's Inspect panel would reveal it.
-    from app.activity_ref import get_or_create_ref
-
-    monkeypatch.setattr("app.llm.litellm.acompletion", _fake_acompletion_with_activity_link)
+    # ObjectId anywhere - the model no longer has any legitimate reason to
+    # mention one (activities are referenced by name only), so it's always
+    # stripped, no exceptions.
+    monkeypatch.setattr("app.llm.litellm.acompletion", _fake_acompletion_with_activity_id)
     monkeypatch.setattr("app.mcp_client.settings", type("S", (), {"mcp_server_url": ""})())
 
     response = client.post(
@@ -148,28 +146,6 @@ def test_chat_never_sends_the_raw_activity_id_even_inside_a_real_link(monkeypatc
 
     assert response.status_code == 200
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in response.text
-    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
-    assert f"activity:{token}" in response.text
-
-
-def test_chat_final_html_field_has_the_token_not_the_raw_id(monkeypatch):
-    # The html field (for API consumers that don't render markdown themselves)
-    # is built from the SAME sanitized/tokenized text as the delta stream - it
-    # must not become a second place the raw id sneaks out through.
-    from app.activity_ref import get_or_create_ref
-
-    monkeypatch.setattr("app.llm.litellm.acompletion", _fake_acompletion_with_activity_link)
-    monkeypatch.setattr("app.mcp_client.settings", type("S", (), {"mcp_server_url": ""})())
-
-    response = client.post(
-        "/api/chat",
-        json={"messages": [{"role": "user", "content": "tell me about Jumpin Heights"}]},
-    )
-
-    done_frame = _sse_frames(response.text)[-1]
-    assert "66f1a2b3c4d5e6f7a8b9c0d1" not in done_frame
-    token = get_or_create_ref("66f1a2b3c4d5e6f7a8b9c0d1")
-    assert f'<a href=\\"activity:{token}\\">Jumpin Heights</a>' in done_frame
 
 
 # --- error path -----------------------------------------------------------
