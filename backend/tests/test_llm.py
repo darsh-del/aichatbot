@@ -436,3 +436,55 @@ def test_rag_retrieval_runs_off_the_event_loop_and_is_gated(monkeypatch):
     seen.clear()
     asyncio.run(llm_module.build_messages([_ChatMessage(role="user", content="hii how are you")]))
     assert seen == {}
+
+
+# --- Per-session message cap (§5: friendly "start a new chat" reply) ------
+
+
+def _collect_frames(agen):
+    async def _run():
+        return [chunk async for chunk in agen]
+    return asyncio.run(_run())
+
+
+def test_stream_chat_response_declines_without_an_llm_call_once_capped(monkeypatch):
+    # The cap is checked BEFORE build_messages/the tool loop run at all - no
+    # model round-trip should happen once a session is capped out.
+    async def fake_get_message_count(_session_id):
+        return _settings.max_messages_per_session
+
+    async def fail_if_called(*_a, **_k):
+        raise AssertionError("litellm.acompletion must not be called once the session is capped")
+
+    monkeypatch.setattr(llm_module, "get_message_count", fake_get_message_count)
+    monkeypatch.setattr(llm_module.litellm, "acompletion", fail_if_called)
+
+    frames = _collect_frames(llm_module.stream_chat_response(
+        [_ChatMessage(role="user", content="one more question")], session_id="capped-session",
+    ))
+
+    assert len(frames) == 2
+    assert '"done": false' in frames[0]
+    assert "start a fresh chat" in frames[0]
+    assert frames[1] == 'data: {"delta": "", "done": true}\n\n'
+
+
+def test_stream_chat_response_does_not_check_the_cap_without_a_session_id(monkeypatch):
+    # No session_id means nothing to key the cap on (e.g. a stateless caller) -
+    # get_message_count must not even be called.
+    async def fail_if_called(*_a, **_k):
+        raise AssertionError("get_message_count must not be called without a session_id")
+
+    async def raise_marker(*_a, **_k):
+        raise RuntimeError("marker: got past the cap check")
+
+    monkeypatch.setattr(llm_module, "get_message_count", fail_if_called)
+    monkeypatch.setattr(llm_module, "build_messages", raise_marker)
+
+    frames = _collect_frames(llm_module.stream_chat_response(
+        [_ChatMessage(role="user", content="hi")], session_id=None,
+    ))
+    # stream_chat_response turns any exception into a friendly error frame -
+    # reaching that (rather than an AssertionError bubbling out of the fake
+    # get_message_count) proves the cap check was skipped, not tripped.
+    assert any('"done": true' in f for f in frames)

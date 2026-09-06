@@ -148,6 +148,53 @@ def test_chat_never_sends_the_raw_activity_id(monkeypatch):
     assert "66f1a2b3c4d5e6f7a8b9c0d1" not in response.text
 
 
+# --- end-to-end: per-session message cap -----------------------------------
+
+from conftest import FakeRedis
+from app import session_store as session_store_module
+from app.config import settings as _chat_settings
+
+
+def test_chat_declines_with_friendly_message_once_session_is_capped(monkeypatch):
+    async def fail_if_called(*_a, **_k):
+        raise AssertionError("litellm.acompletion must not be called once the session is capped")
+
+    monkeypatch.setattr("app.llm.litellm.acompletion", fail_if_called)
+    monkeypatch.setattr(
+        session_store_module, "redis_client",
+        FakeRedis({"session:capped-1": {"message_count": str(_chat_settings.max_messages_per_session)}}),
+    )
+
+    response = client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "one more question"}], "session_id": "capped-1"},
+    )
+
+    assert response.status_code == 200
+    frames = _sse_frames(response.text)
+    assert len(frames) == 2
+    assert "start a fresh chat" in frames[0]
+    assert frames[1] == 'data: {"delta": "", "done": true}'
+
+
+def test_chat_proceeds_normally_one_message_under_the_cap(monkeypatch):
+    monkeypatch.setattr("app.llm.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("app.mcp_client.settings", type("S", (), {"mcp_server_url": ""})())
+    monkeypatch.setattr(
+        session_store_module, "redis_client",
+        FakeRedis({"session:almost-capped": {"message_count": str(_chat_settings.max_messages_per_session - 1)}}),
+    )
+
+    response = client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "Hi there"}], "session_id": "almost-capped"},
+    )
+
+    assert response.status_code == 200
+    assert "Hello world!" in response.text
+    assert "start a fresh chat" not in response.text
+
+
 # --- error path -----------------------------------------------------------
 
 

@@ -39,7 +39,7 @@ from app.token_store import (
 from app.tools import TOOL_SCHEMAS, dispatch_tool
 from app.session_store import (
     save_turn, should_prompt_login, mark_login_prompted, should_nudge_for_contact,
-    save_verified_phone,
+    save_verified_phone, get_message_count,
 )
 from app.stream_sanitizer import StreamSanitizer
 
@@ -624,6 +624,24 @@ async def stream_chat_response(
     """
     t_request = time.perf_counter()
     try:
+        if session_id and await get_message_count(session_id) >= settings.max_messages_per_session:
+            # No LLM call at all past the cap - cheap to check, and keeps a
+            # capped-out session from still paying for a model round-trip.
+            logger.info(
+                "Session %s hit the %d-message cap; declining without an LLM call",
+                session_id, settings.max_messages_per_session,
+            )
+            yield _sse({
+                "delta": (
+                    "Whew, we've covered a lot in this chat! I can only handle so many "
+                    "messages in one conversation, could you start a fresh chat so I can "
+                    "keep helping you properly? \U0001fa82"
+                ),
+                "done": False,
+            })
+            yield _sse({"delta": "", "done": True})
+            return
+
         t0 = time.perf_counter()
         nudge_contact = bool(session_id) and await should_nudge_for_contact(session_id)
         messages = await build_messages(chat_messages, session_id, nudge_contact)

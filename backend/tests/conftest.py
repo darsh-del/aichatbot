@@ -26,6 +26,9 @@ class FakeRedis:
     async def hgetall(self, key):
         return self._data.get(key, {})
 
+    async def hget(self, key, field):
+        return self._data.get(key, {}).get(field)
+
     async def hset(self, key, field=None, value=None, mapping=None):
         bucket = self._data.setdefault(key, {})
         if mapping:
