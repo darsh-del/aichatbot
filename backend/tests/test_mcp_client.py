@@ -4,13 +4,56 @@ Covers the one behavioral difference get_activities_summary has from every
 other catalog tool: it is exempt from MAX_TOOL_RESULT_CHARS truncation (see
 _postprocess). Everything else still truncates as before.
 """
+import asyncio
 import json
+import time
+from contextlib import asynccontextmanager
 
 import pytest
+from app import mcp_client
 from app.mcp_client import MAX_TOOL_RESULT_CHARS, _postprocess, _active_closure, _DotDict
 
 _BIG_PAYLOAD = json.dumps([{"title": "x" * 200, "_id": str(i)} for i in range(200)])
 assert len(_BIG_PAYLOAD) > MAX_TOOL_RESULT_CHARS  # sanity: the fixture is actually big enough
+
+
+@pytest.mark.asyncio
+async def test_fresh_session_times_out_instead_of_hanging_forever(monkeypatch):
+    """Regression for the incident where a wedged MCP server (bad DNS/cert)
+    hung session.initialize() forever with no timeout, and an external
+    cancellation mid-handshake corrupted anyio's cancel scopes and crashed
+    the whole SSE response instead of failing cleanly. _fresh_session must
+    now bound the wait and clean up its own stack on failure."""
+    closed = []
+
+    @asynccontextmanager
+    async def fake_transport(*args, **kwargs):
+        yield ("read", "write", None)
+
+    class _FakeSession:
+        def __init__(self, read, write):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            closed.append("session")
+
+        async def initialize(self):
+            await asyncio.sleep(10)  # simulates the wedged server — never returns
+
+    monkeypatch.setattr(mcp_client, "streamablehttp_client", fake_transport)
+    monkeypatch.setattr(mcp_client, "ClientSession", _FakeSession)
+    monkeypatch.setattr(mcp_client, "_MCP_CONNECT_TIMEOUT_SECONDS", 0.05)
+
+    t0 = time.monotonic()
+    with pytest.raises(asyncio.TimeoutError):
+        await mcp_client._fresh_session()
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 1.0, "should fail fast on the configured timeout, not hang"
+    assert "session" in closed, "the partially-opened stack must be cleaned up, not leaked"
 
 
 @pytest.mark.asyncio

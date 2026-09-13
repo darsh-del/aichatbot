@@ -13,6 +13,7 @@ The authToken from verify_otp flows through the conversation naturally — the
 LLM sees it in the tool result and passes it into subsequent authenticated
 tool calls. Each user's token is scoped to their conversation.
 """
+import asyncio
 import json
 import logging
 import re
@@ -146,6 +147,9 @@ async def close_http_client() -> None:
         _http_client = None
 
 
+_MCP_CONNECT_TIMEOUT_SECONDS = 30
+
+
 async def _fresh_session():
     """Create a fresh MCP session. Returns (stack, session).
 
@@ -156,16 +160,27 @@ async def _fresh_session():
     The session itself is always freshly created per call (safe under this
     app's parallel-tool-call fan-out); only the underlying HTTP transport
     connection is reused, via the shared client below.
+
+    Bounded by _MCP_CONNECT_TIMEOUT_SECONDS: without this, a wedged/misrouted
+    MCP server (e.g. DNS pointing at the wrong host) hangs session.initialize()
+    forever — the request never times out on its own, and an external
+    cancellation lands mid-handshake and corrupts anyio's cancel scopes,
+    crashing the whole streaming response instead of failing cleanly. A plain
+    TimeoutError here is caught like any other error by stream_chat_response's
+    except block, so the user gets a friendly retry message instead of a hang.
     """
     stack = AsyncExitStack()
     await stack.__aenter__()
-    
-    # We pass the no-close wrapper factory to streamablehttp_client
-    read, write, _ = await stack.enter_async_context(
-        streamablehttp_client(settings.mcp_server_url, httpx_client_factory=_client_factory)
-    )
-    session = await stack.enter_async_context(ClientSession(read, write))
-    await session.initialize()
+    try:
+        # We pass the no-close wrapper factory to streamablehttp_client
+        read, write, _ = await stack.enter_async_context(
+            streamablehttp_client(settings.mcp_server_url, httpx_client_factory=_client_factory)
+        )
+        session = await stack.enter_async_context(ClientSession(read, write))
+        await asyncio.wait_for(session.initialize(), timeout=_MCP_CONNECT_TIMEOUT_SECONDS)
+    except BaseException:
+        await stack.aclose()
+        raise
     return stack, session
 
 
@@ -448,7 +463,6 @@ async def call_catalog_tool(tool_call, session=None) -> dict:
     except Exception as exc:
         logger.exception("MCP call %s failed after %.3fs", fn, time.perf_counter() - t0)
         from app.notifier import send_critical_alert
-        import asyncio
         asyncio.create_task(send_critical_alert("mcp_tool_error", str(exc), f"Failed to execute MCP tool: {fn}"))
         raise
     finally:
